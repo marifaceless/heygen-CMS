@@ -1,0 +1,5 @@
+{
+  "name": "HeyGen CMS Tool",
+  "description": "A high-performance video template management and rendering tool for HeyGen CMS operations. Features real-time previews, BGM management, and multi-clip sequencing.",
+  "requestFramePermissions": []
+}

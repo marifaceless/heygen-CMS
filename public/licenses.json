@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "licenses": [
+    {
+      "key": "HEYGEN-SHARE-001",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-01"
+    },
+    {
+      "key": "HEYGEN-SHARE-002",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-02"
+    },
+    {
+      "key": "HEYGEN-SHARE-003",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-03"
+    },
+    {
+      "key": "HEYGEN-SHARE-004",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-04"
+    },
+    {
+      "key": "HEYGEN-SHARE-005",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-05"
+    },
+    {
+      "key": "HEYGEN-SHARE-006",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-06"
+    },
+    {
+      "key": "HEYGEN-SHARE-007",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-07"
+    },
+    {
+      "key": "HEYGEN-SHARE-008",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-08"
+    },
+    {
+      "key": "HEYGEN-SHARE-009",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-09"
+    },
+    {
+      "key": "HEYGEN-SHARE-010",
+      "status": "active",
+      "expiresAt": "2026-12-31T23:59:59Z",
+      "label": "Shared-10"
+    }
+  ]
+}
