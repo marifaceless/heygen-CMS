@@ -12,10 +12,10 @@ interface AssetLibraryProps {
 }
 
 export const AssetLibrary: React.FC<AssetLibraryProps> = ({ library, onAdd, onRemove }) => {
-  const handleAdd = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const [isDragOver, setIsDragOver] = React.useState(false);
+  const [dropError, setDropError] = React.useState<string | null>(null);
 
+  const importAudioFile = async (file: File) => {
     const assetId = Math.random().toString(36).substr(2, 9);
     const url = URL.createObjectURL(file);
     saveMediaBlob(assetId, file).catch((error) => {
@@ -32,14 +32,87 @@ export const AssetLibrary: React.FC<AssetLibraryProps> = ({ library, onAdd, onRe
     });
   };
 
+  const handleAdd = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDropError(null);
+    await importAudioFile(file);
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (Array.from(e.dataTransfer.types || []).includes('Files')) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (Array.from(e.dataTransfer.types || []).includes('Files') && !isDragOver) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length === 0) {
+      return;
+    }
+
+    const audioFiles = files.filter((file) => file.type.startsWith('audio/'));
+    if (audioFiles.length === 0) {
+      setDropError('Only audio files can be added to the library.');
+      return;
+    }
+
+    const rejected = files.length - audioFiles.length;
+    if (rejected > 0) {
+      setDropError('Some files were skipped (only audio files can be added to the library).');
+    } else {
+      setDropError(null);
+    }
+
+    for (const file of audioFiles) {
+      await importAudioFile(file);
+    }
+  };
+
+  const onDragStartAsset = (asset: LibraryAsset) => (e: React.DragEvent) => {
+    e.dataTransfer.setData('application/x-heygen-library-asset-id', asset.id);
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
   return (
-    <div className="max-w-[1200px] mx-auto p-10 animate-fadeIn">
+    <div
+      className="max-w-[1200px] mx-auto p-10 animate-fadeIn"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <header className="flex justify-between items-end mb-10 pb-8 border-b border-slate-100">
         <div className="space-y-1">
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Asset Library</h1>
           <p className="text-sm text-slate-500">
             Store your preferred BGM tracks locally for quick access across different compositions.
           </p>
+          {dropError && (
+            <p className="mt-3 text-[10px] font-bold text-red-500 bg-red-50 border border-red-100 rounded-2xl px-4 py-3 inline-block">
+              {dropError}
+            </p>
+          )}
         </div>
         
         <label className="flex items-center gap-3 px-8 py-4 rounded-2xl font-black shadow-xl transition-all active:scale-95 bg-blue-600 text-white hover:bg-blue-700 shadow-blue-100 cursor-pointer border-b-4 border-blue-800">
@@ -47,6 +120,13 @@ export const AssetLibrary: React.FC<AssetLibraryProps> = ({ library, onAdd, onRe
           <ICONS.Music className="w-5 h-5" /> Import Audio Track
         </label>
       </header>
+
+      {isDragOver && (
+        <div className="mb-8 p-6 bg-blue-50 rounded-[2rem] border-2 border-dashed border-blue-200 text-center">
+          <p className="text-xs font-black text-blue-700 uppercase tracking-widest">Drop audio files to add to library</p>
+          <p className="text-[10px] font-bold text-blue-600 mt-1">Tip: drag a track onto the Workstation BGM box to use it.</p>
+        </div>
+      )}
 
       {library.length === 0 ? (
         <div className="bg-white rounded-[2.5rem] border-2 border-dashed border-slate-100 p-20 text-center">
@@ -59,7 +139,13 @@ export const AssetLibrary: React.FC<AssetLibraryProps> = ({ library, onAdd, onRe
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {library.map((asset) => (
-            <div key={asset.id} className="group bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all hover:border-blue-100">
+            <div
+              key={asset.id}
+              draggable
+              onDragStart={onDragStartAsset(asset)}
+              className="group bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm hover:shadow-xl transition-all hover:border-blue-100 cursor-grab active:cursor-grabbing"
+              title="Drag to Workstation BGM"
+            >
                <div className="flex items-center gap-4 mb-6">
                   <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center border border-blue-100 shadow-sm group-hover:bg-blue-600 group-hover:text-white transition-all">
                      <ICONS.Music className="w-6 h-6" />

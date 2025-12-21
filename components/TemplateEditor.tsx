@@ -25,6 +25,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
 
   const [showLibraryPicker, setShowLibraryPicker] = useState(false);
   const [totalFrames, setTotalFrames] = useState(600);
+  const [dragOverTarget, setDragOverTarget] = useState<null | 'video1' | 'video2' | 'bgm'>(null);
+  const [dropError, setDropError] = useState<string | null>(null);
 
   const getClipDuration = (mode: BGMMode, video1: VideoAsset | null, video2: VideoAsset | null) => {
     const v1 = video1?.duration || 0;
@@ -87,10 +89,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     setShowLibraryPicker(false);
   };
 
-  const handleFileUpload = (type: 'video1' | 'video2' | 'bgm') => async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
+  const importFile = async (type: 'video1' | 'video2' | 'bgm', file: File) => {
     const url = URL.createObjectURL(file);
     const assetId = Math.random().toString(36).substr(2, 9);
     saveMediaBlob(assetId, file).catch((error) => {
@@ -98,7 +97,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     });
     const duration = await getMediaDuration(file);
     const safeDuration = duration > 0 ? duration : type === 'bgm' ? 180 : 15;
-    
+
     if (type === 'bgm') {
       const newBgm: BGMAsset = {
         id: assetId,
@@ -112,7 +111,6 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
         loop: false
       };
       setConfig(prev => ({ ...prev, bgm: newBgm }));
-      // Automatically add to library for convenience
       onAddToLibrary({
         id: newBgm.id,
         name: newBgm.name,
@@ -120,16 +118,109 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
         duration: newBgm.duration,
         addedAt: Date.now()
       });
-    } else {
-      setConfig(prev => ({
-        ...prev,
-        [type]: {
-          id: assetId,
-          name: file.name,
-          url,
-          duration: safeDuration 
-        }
-      }));
+      return;
+    }
+
+    setConfig(prev => ({
+      ...prev,
+      [type]: {
+        id: assetId,
+        name: file.name,
+        url,
+        duration: safeDuration
+      }
+    }));
+  };
+
+  const handleFileUpload = (type: 'video1' | 'video2' | 'bgm') => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setDropError(null);
+    await importFile(type, file);
+  };
+
+  const getDroppedFiles = (e: React.DragEvent) => Array.from(e.dataTransfer.files || []);
+
+  const getDroppedLibraryAssetId = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData('application/x-heygen-library-asset-id');
+    return raw ? raw : null;
+  };
+
+  const handleDrop = (target: 'video1' | 'video2' | 'bgm') => async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverTarget(null);
+
+    const libraryAssetId = target === 'bgm' ? getDroppedLibraryAssetId(e) : null;
+    if (libraryAssetId) {
+      const asset = library.find((item) => item.id === libraryAssetId);
+      if (!asset) {
+        setDropError('That library asset is no longer available. Please refresh and try again.');
+        return;
+      }
+      setDropError(null);
+      selectFromLibrary(asset);
+      return;
+    }
+
+    const files = getDroppedFiles(e);
+    if (files.length === 0) {
+      return;
+    }
+    if (files.length > 1) {
+      setDropError('Please drop only one file at a time onto a slot.');
+      return;
+    }
+
+    const file = files[0];
+    const isVideo = file.type.startsWith('video/');
+    const isAudio = file.type.startsWith('audio/');
+
+    if ((target === 'video1' || target === 'video2') && !isVideo) {
+      setDropError('Only video files can be dropped here.');
+      return;
+    }
+    if (target === 'bgm' && !isAudio) {
+      setDropError('Only audio files can be dropped here.');
+      return;
+    }
+
+    const existing = target === 'video1' ? config.video1 : target === 'video2' ? config.video2 : config.bgm;
+    if (existing) {
+      const confirmed = window.confirm(`Replace "${existing.name}" with "${file.name}"?`);
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    try {
+      setDropError(null);
+      await importFile(target, file);
+    } catch (error) {
+      setDropError(error instanceof Error ? error.message : 'Unable to import file.');
+    }
+  };
+
+  const handleDragEnter = (target: 'video1' | 'video2' | 'bgm') => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverTarget(target);
+  };
+
+  const handleDragOver = (target: 'video1' | 'video2' | 'bgm') => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (dragOverTarget !== target) {
+      setDragOverTarget(target);
+    }
+  };
+
+  const handleDragLeave = (target: 'video1' | 'video2' | 'bgm') => (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (dragOverTarget === target) {
+      setDragOverTarget(null);
     }
   };
 
@@ -244,7 +335,19 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
               {['video1', 'video2'].map((v) => (
                 <div key={v} className="space-y-2">
                   <label className="text-[10px] font-black text-slate-500 uppercase">{v === 'video1' ? '1. Intro Clip' : '2. Body Clip'}</label>
-                  <div className={`relative border-2 border-dashed rounded-2xl p-4 transition-all ${config[v] ? 'border-blue-500 bg-blue-50/30' : 'border-slate-200 hover:bg-slate-50'}`}>
+                  <div
+                    onDragEnter={handleDragEnter(v as 'video1' | 'video2')}
+                    onDragOver={handleDragOver(v as 'video1' | 'video2')}
+                    onDragLeave={handleDragLeave(v as 'video1' | 'video2')}
+                    onDrop={handleDrop(v as 'video1' | 'video2')}
+                    className={`relative border-2 border-dashed rounded-2xl p-4 transition-all ${
+                      dragOverTarget === v
+                        ? 'border-blue-600 bg-blue-50/50'
+                        : config[v]
+                          ? 'border-blue-500 bg-blue-50/30'
+                          : 'border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
                     {config[v] ? (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2 overflow-hidden">
@@ -258,11 +361,17 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
                         <input type="file" accept="video/*" onChange={handleFileUpload(v as any)} className="hidden" />
                         <ICONS.Download className="w-5 h-5 text-slate-200 mb-1" />
                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Select {v === 'video1' ? 'Intro' : 'Body'}</span>
+                        <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mt-1">or drop a video</span>
                       </label>
                     )}
                   </div>
                 </div>
               ))}
+              {dropError && (
+                <div className="text-[10px] font-bold text-red-500 bg-red-50 border border-red-100 rounded-2xl px-4 py-3">
+                  {dropError}
+                </div>
+              )}
             </div>
           </section>
 
@@ -283,7 +392,17 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
             
             {config.bgm ? (
               <div className="space-y-6">
-                <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 flex items-center justify-between">
+                <div
+                  onDragEnter={handleDragEnter('bgm')}
+                  onDragOver={handleDragOver('bgm')}
+                  onDragLeave={handleDragLeave('bgm')}
+                  onDrop={handleDrop('bgm')}
+                  className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                    dragOverTarget === 'bgm'
+                      ? 'bg-purple-50 border-purple-300 border-dashed'
+                      : 'bg-slate-50 border-slate-100'
+                  }`}
+                >
                   <div className="flex items-center gap-2 overflow-hidden">
                     <ICONS.Music className="w-4 h-4 text-blue-500" />
                     <span className="text-[10px] font-bold truncate text-slate-600">{config.bgm.name}</span>
@@ -379,10 +498,21 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
                 </div>
               </div>
             ) : (
-              <label className="flex flex-col items-center justify-center py-8 cursor-pointer border-2 border-dashed border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors">
+              <label
+                onDragEnter={handleDragEnter('bgm')}
+                onDragOver={handleDragOver('bgm')}
+                onDragLeave={handleDragLeave('bgm')}
+                onDrop={handleDrop('bgm')}
+                className={`flex flex-col items-center justify-center py-8 cursor-pointer border-2 border-dashed rounded-2xl transition-colors ${
+                  dragOverTarget === 'bgm'
+                    ? 'border-purple-500 bg-purple-50/50'
+                    : 'border-slate-200 hover:bg-slate-50'
+                }`}
+              >
                 <input type="file" accept="audio/*" onChange={handleFileUpload('bgm')} className="hidden" />
                 <ICONS.Music className="w-8 h-8 text-slate-200 mb-2" />
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Incorporate BGM Track</span>
+                <span className="text-[9px] font-black text-slate-300 uppercase tracking-widest mt-1">drop audio / drag from library</span>
               </label>
             )}
           </section>

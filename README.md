@@ -26,6 +26,13 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
 
 `npm run test:pipeline`
 
+## Drag & Drop
+
+- Workstation: drop a `video/*` file onto the Video 1 / Video 2 boxes.
+- Workstation: drop an `audio/*` file onto the BGM box to import + auto-save into the Asset Library.
+- Asset Library: drop `audio/*` files anywhere on the Library screen to add them.
+- Asset Library → Workstation: drag a saved library track and drop it onto the BGM box (no re-import).
+
 ## Local persistence
 
 - Queue state and library metadata are saved to localStorage automatically.
