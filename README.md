@@ -4,21 +4,82 @@
 
 # Run and deploy your AI Studio app
 
-This contains everything you need to run your app locally.
+This repo contains everything you need to run the app locally.
 
 View your app in AI Studio: https://ai.studio/apps/drive/1WlkFTh_xdez1cUyHuT3MD-nRl0ElHnDu
 
-## Run Locally
+## Quick Start (beginner friendly)
 
-**Prerequisites:**  Node.js
+### 0) Install what you need (one time)
 
+- Node.js LTS: https://nodejs.org
+- ffmpeg + ffprobe (needed for local rendering): https://ffmpeg.org/download.html
+- Git (optional, only if you want to clone): https://git-scm.com
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Update shared license keys in [public/licenses.json](public/licenses.json)
-4. Run the app + local render server:
-   `npm run dev:all`
+### 1) Open a command window
+
+**macOS**
+
+Open Terminal: Finder -> Applications -> Utilities -> Terminal.
+
+**Windows**
+
+Press the Windows key, type `Command Prompt`, press Enter.
+
+Tip: paste with Cmd+V on macOS, or right-click in Command Prompt on Windows.
+When a step says "paste a command," click in the command window, paste the line, then press Enter to run it.
+
+### 2) Download the project
+
+Pick one option below.
+
+**Option A (recommended): clone with Git**
+
+Copy and paste these lines, pressing Enter after each line:
+
+```bash
+git clone <your-repo-url>
+cd heygen-cms-tool
+```
+
+**Option B: download a ZIP**
+
+1. Click **Code -> Download ZIP** on the repo page.
+2. Unzip it, then open the extracted folder.
+
+### 3) Go to the project folder
+
+If you used Option A above, you can skip this step. Otherwise, in the command window, type `cd ` (with a space), then drag the project folder onto the window and press Enter.
+
+### 4) Add license keys
+
+Open `public/licenses.json` in the project folder and paste the shared keys.
+If you do not have an editor installed, use TextEdit (macOS) or Notepad (Windows).
+
+### 5) Run the app
+
+**macOS (first time only)**
+
+```bash
+chmod +x heygen-cms-launcher-mac.command
+```
+
+**macOS (run)**
+
+```bash
+./heygen-cms-launcher-mac.command
+```
+
+**Windows (run)**
+
+```bat
+.\heygen-cms-launcher-windows.cmd
+```
+
+You can also double-click the launcher files if you prefer.
+If macOS blocks the launcher, right-click the file, choose Open, then click Open.
+
+The launchers install dependencies automatically the first time and then start the app + render server. When they finish, open the URL printed in the terminal (usually `http://localhost:5173`).
 
 ## Pipeline test (recommended)
 
