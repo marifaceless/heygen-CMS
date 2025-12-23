@@ -34,6 +34,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   const [audioUnlocked, setAudioUnlocked] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioTimers = useRef<{ start?: number; stop?: number }>({});
+  const audioKickoff = useRef(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const previewVideo1 = batchVideo1[0] ?? null;
   const previewVideo2 = batchVideo2[0] ?? null;
@@ -418,7 +420,9 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       return;
     }
     stopPreviewAudio();
-    audio.volume = Math.min(1, Math.max(0, settings.volume));
+    const targetVolume = Math.min(1, Math.max(0, settings.volume));
+    const shouldDelay = settings.delayMs > 0;
+    audio.volume = shouldDelay ? 0 : targetVolume;
     audio.loop = settings.loop;
     audio.currentTime = 0;
 
@@ -426,20 +430,21 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       audio.play().catch(() => {
         // Browser may block autoplay; user interaction will retry on next change.
       });
+      if (shouldDelay) {
+        audioTimers.current.start = window.setTimeout(() => {
+          audio.volume = targetVolume;
+        }, settings.delayMs);
+      }
       if (settings.playLength > 0) {
+        const stopDelay = settings.delayMs + settings.playLength * 1000;
         audioTimers.current.stop = window.setTimeout(() => {
           audio.pause();
           audio.currentTime = 0;
-        }, settings.playLength * 1000);
+        }, stopDelay);
       }
     };
 
-    if (settings.delayMs <= 0) {
-      start();
-      return;
-    }
-
-    audioTimers.current.start = window.setTimeout(start, settings.delayMs);
+    start();
   };
 
   const updateBgm = (updates: Partial<BGMAsset>) => {
@@ -560,8 +565,25 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   };
 
   const handlePreviewClick = () => {
-    if (!audioUnlocked && config.bgm?.url) {
+    if (!audioUnlocked) {
       setAudioUnlocked(true);
+    }
+    if (previewAudioSettings) {
+      audioKickoff.current = true;
+      startPreviewAudio({
+        delayMs: previewAudioSettings.delayMs,
+        playLength: previewAudioSettings.playLength,
+        loop: previewAudioSettings.loop,
+        volume: previewAudioSettings.volume,
+      });
+    }
+    const video = videoRef.current;
+    if (video) {
+      video.muted = false;
+      video.currentTime = 0;
+      video.play().catch(() => {
+        // ignore autoplay restrictions
+      });
     }
   };
 
@@ -610,7 +632,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   const previewLabel = previewClipType === 'video2' ? 'Clip 2' : 'Clip 1';
 
   const previewAudioSettings = (() => {
-    if (!audioUnlocked || !config.bgm || !previewClip || !config.bgm.url) {
+    if (!config.bgm || !previewClip || !config.bgm.url) {
       return null;
     }
     if (config.bgm.mode === BGMMode.VIDEO1_ONLY && previewClipType !== 'video1') {
@@ -635,7 +657,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       volume: config.bgm.volume,
     };
   })();
-  const previewAudioActive = Boolean(previewAudioSettings);
+  const previewAudioActive = audioUnlocked && Boolean(previewAudioSettings);
   const previewDelayMs = previewAudioSettings?.delayMs ?? 0;
   const previewPlayLength = previewAudioSettings?.playLength ?? 0;
   const previewLoop = previewAudioSettings?.loop ?? false;
@@ -644,6 +666,10 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   useEffect(() => {
     if (!audioUnlocked || !previewAudioActive || !config.bgm?.url) {
       stopPreviewAudio();
+      return;
+    }
+    if (audioKickoff.current) {
+      audioKickoff.current = false;
       return;
     }
     startPreviewAudio({
@@ -664,6 +690,21 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     previewVolume,
     config.bgm?.url,
   ]);
+
+  useEffect(() => {
+    if (!audioUnlocked) {
+      return;
+    }
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+    video.muted = false;
+    video.currentTime = 0;
+    video.play().catch(() => {
+      // ignore autoplay restrictions
+    });
+  }, [audioUnlocked, previewClip?.id]);
 
   return (
     <div className="max-w-[1400px] mx-auto p-8 animate-fadeIn relative">
@@ -1157,16 +1198,16 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
           >
             {previewClip ? (
               <div className="w-full h-full relative">
-                <video src={previewClip.url} className="w-full h-full object-cover opacity-60" autoPlay muted loop />
+                <video ref={videoRef} src={previewClip.url} className="w-full h-full object-cover opacity-60" autoPlay muted={!audioUnlocked} loop />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                    <div className="px-6 py-2 bg-blue-600/20 backdrop-blur-xl border border-white/20 rounded-full text-white text-[10px] font-black tracking-[0.3em] uppercase">
                      Local Workspace Preview
                    </div>
                 </div>
-                {config.bgm && !audioUnlocked && (
+                {!audioUnlocked && (
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="px-5 py-2 bg-black/60 backdrop-blur-md border border-white/10 rounded-full text-white text-[10px] font-black uppercase tracking-widest">
-                      Click preview to enable BGM sound
+                      Click preview to enable audio
                     </div>
                   </div>
                 )}

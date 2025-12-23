@@ -108,7 +108,7 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
   - End starts the music so it finishes at the end of the target clip using the selected length.
   - Length can be Full Track or Custom Length.
   - Looping is auto-enabled if the selected length exceeds the audio duration.
-- Preview audio: click the preview window once to enable BGM sound in the preview.
+- Preview audio: click the preview window once to enable clip + BGM audio in the preview.
 
 ## Local persistence
 
