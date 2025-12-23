@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ICONS } from '../constants';
 import { ProjectConfig, BGMMode, BGMAsset, LibraryAsset, VideoAsset } from '../types';
 import { saveMediaBlob } from '../mediaStore';
@@ -31,6 +31,9 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   const [dropError, setDropError] = useState<string | null>(null);
   const [bgmStartMode, setBgmStartMode] = useState<'beginning' | 'end' | 'custom'>('beginning');
   const [bgmLengthMode, setBgmLengthMode] = useState<'full' | 'custom'>('full');
+  const [audioUnlocked, setAudioUnlocked] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioTimers = useRef<{ start?: number; stop?: number }>({});
 
   const previewVideo1 = batchVideo1[0] ?? null;
   const previewVideo2 = batchVideo2[0] ?? null;
@@ -389,6 +392,56 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       video2: batchVideo2[index] ?? null,
     }));
 
+  const clearAudioTimers = () => {
+    if (audioTimers.current.start) {
+      window.clearTimeout(audioTimers.current.start);
+    }
+    if (audioTimers.current.stop) {
+      window.clearTimeout(audioTimers.current.stop);
+    }
+    audioTimers.current = {};
+  };
+
+  const stopPreviewAudio = () => {
+    clearAudioTimers();
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+    audio.pause();
+    audio.currentTime = 0;
+  };
+
+  const startPreviewAudio = (settings: { delayMs: number; playLength: number; loop: boolean; volume: number }) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+    stopPreviewAudio();
+    audio.volume = Math.min(1, Math.max(0, settings.volume));
+    audio.loop = settings.loop;
+    audio.currentTime = 0;
+
+    const start = () => {
+      audio.play().catch(() => {
+        // Browser may block autoplay; user interaction will retry on next change.
+      });
+      if (settings.playLength > 0) {
+        audioTimers.current.stop = window.setTimeout(() => {
+          audio.pause();
+          audio.currentTime = 0;
+        }, settings.playLength * 1000);
+      }
+    };
+
+    if (settings.delayMs <= 0) {
+      start();
+      return;
+    }
+
+    audioTimers.current.start = window.setTimeout(start, settings.delayMs);
+  };
+
   const updateBgm = (updates: Partial<BGMAsset>) => {
     setConfig((prev) => ({
       ...prev,
@@ -506,6 +559,12 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     setBatchVideo2([]);
   };
 
+  const handlePreviewClick = () => {
+    if (!audioUnlocked && config.bgm?.url) {
+      setAudioUnlocked(true);
+    }
+  };
+
   const bgmTargetDuration = config.bgm ? getBgmTargetDuration() : 0;
   const bgmDuration = config.bgm?.duration || 0;
   const bgmAutoLoop = config.bgm ? bgmDuration > 0 && config.bgm.playLength > bgmDuration : false;
@@ -526,6 +585,85 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     { value: BGMMode.VIDEO2_ONLY, label: 'Clip 2', disabled: !clip2Available },
     { value: BGMMode.FULL, label: 'Both', disabled: false },
   ] as const;
+  const previewClipType: 'video1' | 'video2' | null = (() => {
+    if (config.bgm?.mode === BGMMode.VIDEO2_ONLY && previewVideo2) {
+      return 'video2';
+    }
+    if (
+      config.bgm?.mode === BGMMode.FULL &&
+      previewVideo1 &&
+      previewVideo2 &&
+      config.bgm.startTime >= (previewVideo1.duration || 0)
+    ) {
+      return 'video2';
+    }
+    if (previewVideo1) {
+      return 'video1';
+    }
+    if (previewVideo2) {
+      return 'video2';
+    }
+    return null;
+  })();
+  const previewClip = previewClipType === 'video2' ? previewVideo2 : previewClipType === 'video1' ? previewVideo1 : null;
+  const previewClipDuration = previewClip?.duration || 0;
+  const previewLabel = previewClipType === 'video2' ? 'Clip 2' : 'Clip 1';
+
+  const previewAudioSettings = (() => {
+    if (!audioUnlocked || !config.bgm || !previewClip || !config.bgm.url) {
+      return null;
+    }
+    if (config.bgm.mode === BGMMode.VIDEO1_ONLY && previewClipType !== 'video1') {
+      return null;
+    }
+    if (config.bgm.mode === BGMMode.VIDEO2_ONLY && previewClipType !== 'video2') {
+      return null;
+    }
+    let startTime = config.bgm.startTime || 0;
+    if (config.bgm.mode === BGMMode.FULL && previewClipType === 'video2' && previewVideo1) {
+      startTime = Math.max(0, startTime - (previewVideo1.duration || 0));
+    }
+    const maxPlay = Math.max(0, previewClipDuration - startTime);
+    const playLength = Math.min(config.bgm.playLength, maxPlay);
+    if (playLength <= 0) {
+      return null;
+    }
+    return {
+      delayMs: startTime * 1000,
+      playLength,
+      loop: bgmLoopActive,
+      volume: config.bgm.volume,
+    };
+  })();
+  const previewAudioActive = Boolean(previewAudioSettings);
+  const previewDelayMs = previewAudioSettings?.delayMs ?? 0;
+  const previewPlayLength = previewAudioSettings?.playLength ?? 0;
+  const previewLoop = previewAudioSettings?.loop ?? false;
+  const previewVolume = previewAudioSettings?.volume ?? 0;
+
+  useEffect(() => {
+    if (!audioUnlocked || !previewAudioActive || !config.bgm?.url) {
+      stopPreviewAudio();
+      return;
+    }
+    startPreviewAudio({
+      delayMs: previewDelayMs,
+      playLength: previewPlayLength,
+      loop: previewLoop,
+      volume: previewVolume,
+    });
+    return () => {
+      stopPreviewAudio();
+    };
+  }, [
+    audioUnlocked,
+    previewAudioActive,
+    previewDelayMs,
+    previewPlayLength,
+    previewLoop,
+    previewVolume,
+    config.bgm?.url,
+  ]);
 
   return (
     <div className="max-w-[1400px] mx-auto p-8 animate-fadeIn relative">
@@ -1011,15 +1149,28 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
         </div>
 
         <div className="xl:col-span-8 space-y-8">
-          <section className="bg-slate-950 rounded-[2.5rem] overflow-hidden aspect-video shadow-2xl border-[12px] border-slate-900 relative group">
-            {config.video1 || config.video2 ? (
+          <section
+            onClick={handlePreviewClick}
+            className={`bg-slate-950 rounded-[2.5rem] overflow-hidden aspect-video shadow-2xl border-[12px] border-slate-900 relative group ${
+              config.bgm && !audioUnlocked ? 'cursor-pointer' : ''
+            }`}
+          >
+            {previewClip ? (
               <div className="w-full h-full relative">
-                {config.video1 && <video src={config.video1.url} className="w-full h-full object-cover opacity-60" autoPlay muted loop />}
+                <video src={previewClip.url} className="w-full h-full object-cover opacity-60" autoPlay muted loop />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                    <div className="px-6 py-2 bg-blue-600/20 backdrop-blur-xl border border-white/20 rounded-full text-white text-[10px] font-black tracking-[0.3em] uppercase">
                      Local Workspace Preview
                    </div>
                 </div>
+                {config.bgm && !audioUnlocked && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="px-5 py-2 bg-black/60 backdrop-blur-md border border-white/10 rounded-full text-white text-[10px] font-black uppercase tracking-widest">
+                      Click preview to enable BGM sound
+                    </div>
+                  </div>
+                )}
+                {config.bgm?.url && <audio ref={audioRef} src={config.bgm.url} preload="auto" />}
               </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-[radial-gradient(circle_at_center,#1e293b_0%,#020617_100%)]">
@@ -1029,7 +1180,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
             
             <div className="absolute top-8 right-8 flex flex-col items-end gap-2">
                <div className="px-4 py-2 bg-black/40 backdrop-blur-md border border-white/10 rounded-2xl text-white text-[10px] font-mono">
-                 FPS: 24 | DUR: {Math.round(totalFrames / 24)}s
+                 FPS: 24 | DUR: {Math.round(totalFrames / 24)}s{previewClip ? ` | ${previewLabel}` : ''}
                </div>
             </div>
           </section>
