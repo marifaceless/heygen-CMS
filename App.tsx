@@ -228,8 +228,15 @@ const App: React.FC = () => {
     };
   }, []);
 
-  const addToQueue = (config: ProjectConfig) => {
-    setQueue(prev => [...prev, { ...config, id: Math.random().toString(36).substr(2, 9) }]);
+  const addToQueueBatch = (configs: ProjectConfig[]) => {
+    if (configs.length === 0) {
+      return;
+    }
+    const items = configs.map((config) => ({
+      ...config,
+      id: Math.random().toString(36).substr(2, 9),
+    }));
+    setQueue((prev) => [...prev, ...items]);
     setActiveTab('queue');
   };
 
@@ -337,7 +344,7 @@ const App: React.FC = () => {
       <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} queueCount={queue.length} />
       <main className="flex-1 overflow-y-auto bg-slate-50/30">
         {activeTab === 'workstation' && (
-          <TemplateEditor onEnqueue={addToQueue} library={library} onAddToLibrary={addToLibrary} />
+          <TemplateEditor onEnqueue={addToQueueBatch} library={library} onAddToLibrary={addToLibrary} />
         )}
         {activeTab === 'queue' && (
           <BatchQueue 

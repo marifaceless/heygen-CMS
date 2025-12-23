@@ -472,10 +472,13 @@ const processQueue = async () => {
       updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
       return;
     }
-    const normalizedVideo2 = await normalizeVideoInput(job.video2Path);
-    if (controller.cancelled) {
-      updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
-      return;
+    let normalizedVideo2 = { url: '', duration: 0 };
+    if (job.video2Path) {
+      normalizedVideo2 = await normalizeVideoInput(job.video2Path);
+      if (controller.cancelled) {
+        updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
+        return;
+      }
     }
 
     const inputProps = {
@@ -496,6 +499,7 @@ const processQueue = async () => {
         playLength: Number(job.bgm.playLength || 0),
         volume: Number(job.bgm.volume || 0.5),
         mode: job.bgm.mode,
+        startTime: Number(job.bgm.startTime || 0),
         loop: Boolean(job.bgm.loop),
       };
     }
@@ -693,8 +697,8 @@ const bootstrap = async () => {
   app.post('/api/render', async (req, res) => {
     try {
       const { name, exportQuality, video1, video2, bgm } = req.body || {};
-      if (!video1?.path || !video2?.path) {
-        res.status(400).json({ error: 'Missing video assets.' });
+      if (!video1?.path) {
+        res.status(400).json({ error: 'Missing video asset.' });
         return;
       }
 
@@ -703,10 +707,16 @@ const bootstrap = async () => {
       const outputPath = path.join(OUTPUT_DIR, `${outputName}.mp4`);
 
       const video1Exists = await fileExists(video1.path);
-      const video2Exists = await fileExists(video2.path);
-      if (!video1Exists || !video2Exists) {
+      if (!video1Exists) {
         res.status(400).json({ error: 'Uploaded media missing on disk. Please re-upload and try again.' });
         return;
+      }
+      if (video2?.path) {
+        const video2Exists = await fileExists(video2.path);
+        if (!video2Exists) {
+          res.status(400).json({ error: 'Uploaded media missing on disk. Please re-upload and try again.' });
+          return;
+        }
       }
 
       enqueueJob({
@@ -715,13 +725,14 @@ const bootstrap = async () => {
         outputPath,
         exportQuality: exportQuality || '1080p',
         video1Path: video1.path,
-        video2Path: video2.path,
+        video2Path: video2?.path || null,
         bgm: bgm?.path
           ? {
               path: bgm.path,
               playLength: Number(bgm.playLength || 0),
               volume: Number(bgm.volume || 0.5),
               mode: bgm.mode,
+              startTime: Number(bgm.startTime || 0),
               loop: Boolean(bgm.loop),
             }
           : null,

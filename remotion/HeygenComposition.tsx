@@ -8,6 +8,7 @@ interface BgmConfig {
   playLength: number;
   volume: number;
   mode: BGMMode;
+  startTime: number;
   loop: boolean;
 }
 
@@ -19,7 +20,7 @@ export interface RenderProps {
   bgm?: BgmConfig | null;
 }
 
-const clampFrames = (frames: number) => Math.max(1, Math.round(frames));
+const toFrames = (frames: number, minFrames = 0) => Math.max(minFrames, Math.round(frames));
 
 const getBgmStart = (mode: BGMMode, video1Frames: number) => {
   if (mode === BGMMode.VIDEO2_ONLY) {
@@ -46,22 +47,27 @@ export const HeygenComposition: React.FC<RenderProps> = ({
   bgm,
 }) => {
   const { fps } = useVideoConfig();
-  const video1Frames = clampFrames(video1Duration * fps);
-  const video2Frames = clampFrames(video2Duration * fps);
+  const video1Frames = toFrames(video1Duration * fps, 1);
+  const video2Frames = toFrames(video2Duration * fps, 0);
 
-  const bgmFrames = bgm ? clampFrames(bgm.playLength * fps) : 0;
-  const bgmStart = bgm ? getBgmStart(bgm.mode, video1Frames) : 0;
-  const bgmMaxFrames = bgm ? getBgmMaxFrames(bgm.mode, video1Frames, video2Frames) : 0;
-  const bgmPlayFrames = bgm ? Math.min(bgmFrames, bgmMaxFrames) : 0;
+  const bgmFrames = bgm ? toFrames(bgm.playLength * fps, 0) : 0;
+  const bgmOffsetFrames = bgm ? toFrames(bgm.startTime * fps, 0) : 0;
+  const bgmTargetFrames = bgm ? getBgmMaxFrames(bgm.mode, video1Frames, video2Frames) : 0;
+  const bgmMaxOffset = bgm ? Math.max(0, bgmTargetFrames - bgmFrames) : 0;
+  const bgmOffset = bgm ? Math.min(bgmOffsetFrames, bgmMaxOffset) : 0;
+  const bgmStart = bgm ? getBgmStart(bgm.mode, video1Frames) + bgmOffset : 0;
+  const bgmPlayFrames = bgm ? Math.min(bgmFrames, Math.max(0, bgmTargetFrames - bgmOffset)) : 0;
 
   return (
     <AbsoluteFill style={{ backgroundColor: 'black' }}>
       <Sequence from={0} durationInFrames={video1Frames}>
         <OffthreadVideo src={video1Path} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
       </Sequence>
-      <Sequence from={video1Frames} durationInFrames={video2Frames}>
-        <OffthreadVideo src={video2Path} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-      </Sequence>
+      {video2Path && video2Frames > 0 && (
+        <Sequence from={video1Frames} durationInFrames={video2Frames}>
+          <OffthreadVideo src={video2Path} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        </Sequence>
+      )}
       {bgm?.path && bgmPlayFrames > 0 && (
         <Sequence from={bgmStart} durationInFrames={bgmPlayFrames}>
           <Audio src={bgm.path} volume={bgm.volume} loop={bgm.loop} />

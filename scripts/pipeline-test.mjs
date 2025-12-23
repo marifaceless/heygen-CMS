@@ -127,6 +127,27 @@ const probeDuration = async (filePath) => {
   return Number(stdout.trim());
 };
 
+const detectSilenceEnd = async (filePath) => {
+  const { stderr } = await run('ffmpeg', [
+    '-v',
+    'info',
+    '-i',
+    filePath,
+    '-af',
+    'silencedetect=noise=-45dB:d=0.2',
+    '-f',
+    'null',
+    '-',
+  ]);
+  const match = stderr.match(/silence_end:\s*([0-9.]+)/);
+  if (!match) {
+    return null;
+  }
+  return Number(match[1]);
+};
+
+const within = (value, expected, tolerance) => Math.abs(value - expected) <= tolerance;
+
 const main = async () => {
   await ensureBin('ffmpeg');
   await ensureBin('ffprobe');
@@ -250,7 +271,54 @@ const main = async () => {
       throw new Error(`ffmpeg decode errors:\n${stderr}`);
     }
 
+    const renderResSingle = await fetch(`${baseUrl}/api/render`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `pipeline-single-${Date.now()}`,
+        exportQuality: '720p',
+        video1: { path: uploaded1, duration: 3 },
+        video2: null,
+        bgm: { path: uploaded3, playLength: 2, startTime: 1, volume: 0.2, mode: 'VIDEO1_ONLY', loop: false },
+      }),
+    });
+
+    if (!renderResSingle.ok) {
+      throw new Error(`create single job failed: ${renderResSingle.status} ${await renderResSingle.text()}`);
+    }
+
+    const { jobId: singleJobId } = await renderResSingle.json();
+    if (!singleJobId) {
+      throw new Error('no jobId returned for single clip test');
+    }
+
+    await pollJob({ baseUrl, jobId: singleJobId });
+
+    const singleOutPath = path.join(TEST_DIR, `output-single-${singleJobId}.mp4`);
+    const singleDl = await fetch(`${baseUrl}/api/download/${singleJobId}`);
+    if (!singleDl.ok) {
+      throw new Error(`single download failed: ${singleDl.status}`);
+    }
+    const singleBuf = Buffer.from(await singleDl.arrayBuffer());
+    await fs.writeFile(singleOutPath, singleBuf);
+
+    const singleDuration = await probeDuration(singleOutPath);
+    if (!Number.isFinite(singleDuration) || Math.abs(singleDuration - 3) > 0.35) {
+      throw new Error(`unexpected single duration: ${singleDuration}s (expected ~3s)`);
+    }
+
+    const silenceEnd = await detectSilenceEnd(singleOutPath);
+    if (silenceEnd === null || !within(silenceEnd, 1, 0.4)) {
+      throw new Error(`unexpected BGM start: ${silenceEnd}s (expected ~1s)`);
+    }
+
+    const singleDecode = await run('ffmpeg', ['-v', 'error', '-i', singleOutPath, '-f', 'null', '-']);
+    if (singleDecode.stderr.trim().length > 0) {
+      throw new Error(`ffmpeg decode errors (single):\n${singleDecode.stderr}`);
+    }
+
     console.log(`OK: ${outPath}`);
+    console.log(`OK: ${singleOutPath}`);
   } finally {
     server.kill('SIGTERM');
   }

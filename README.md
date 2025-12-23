@@ -73,7 +73,7 @@ chmod +x heygen-cms-launcher-mac.command
 **Windows (run)**
 
 ```bat
-.\heygen-cms-launcher-windows.cmd
+.\heygen-cms-launcher-windows.bat
 ```
 
 You can also double-click the launcher files if you prefer.
@@ -89,10 +89,24 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
 
 ## Drag & Drop
 
-- Workstation: drop a `video/*` file onto the Video 1 / Video 2 boxes.
+- Workstation: drop one or many `video/*` files onto the Video 1 / Video 2 boxes.
 - Workstation: drop an `audio/*` file onto the BGM box to import + auto-save into the Asset Library.
 - Asset Library: drop `audio/*` files anywhere on the Library screen to add them.
 - Asset Library → Workstation: drag a saved library track and drop it onto the BGM box (no re-import).
+
+## Batch pairing (multi-clip)
+
+- Drop multiple clips into Video 1 and (optionally) Video 2.
+- Clips are paired by order (1st with 1st, 2nd with 2nd, etc.).
+- If Video 2 has extra clips, they are ignored (Video 1 drives the batch).
+
+## Single-clip + BGM placement
+
+- Video 2 is optional. You can render with just Video 1.
+- BGM supports start time, play length, and looping:
+  - Start Time = where the BGM begins within the selected target (Clip 1 / Clip 2 / Both).
+  - Play Length = how long the BGM plays.
+  - Looping is auto-enabled if Play Length exceeds the audio duration.
 
 ## Local persistence
 

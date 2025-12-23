@@ -102,8 +102,8 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
     const video2Path = await uploadAsset(item.video2, 'Video 2');
     const bgmPath = await uploadAsset(item.bgm, 'BGM');
 
-    if (!video1Path || !video2Path) {
-      throw new Error('Video assets are required to render.');
+    if (!video1Path) {
+      throw new Error('Video 1 is required to render.');
     }
 
     const bgm = item.bgm
@@ -113,6 +113,7 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
           playLength: item.bgm.playLength,
           volume: item.bgm.volume,
           mode: item.bgm.mode,
+          startTime: item.bgm.startTime || 0,
           loop: item.bgm.loop || (item.bgm.duration > 0 && item.bgm.playLength > item.bgm.duration),
         }
       : null;
@@ -124,7 +125,7 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
         name: item.name,
         exportQuality: item.exportQuality,
         video1: { path: video1Path, duration: item.video1?.duration || 0 },
-        video2: { path: video2Path, duration: item.video2?.duration || 0 },
+        video2: video2Path ? { path: video2Path, duration: item.video2?.duration || 0 } : null,
         bgm,
       }),
     });
