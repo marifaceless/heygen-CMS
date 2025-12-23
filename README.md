@@ -103,10 +103,11 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
 ## Single-clip + BGM placement
 
 - Video 2 is optional. You can render with just Video 1.
-- BGM supports start time, play length, and looping:
-  - Start Time = where the BGM begins within the selected target (Clip 1 / Clip 2 / Both).
-  - Play Length = how long the BGM plays.
-  - Looping is auto-enabled if Play Length exceeds the audio duration.
+- BGM supports target, start position, length, and looping:
+  - Start has presets (Beginning / End / Custom).
+  - End starts the music so it finishes at the end of the target clip using the selected length.
+  - Length can be Full Track or Custom Length.
+  - Looping is auto-enabled if the selected length exceeds the audio duration.
 
 ## Local persistence
 

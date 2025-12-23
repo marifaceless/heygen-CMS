@@ -29,6 +29,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   const [totalFrames, setTotalFrames] = useState(600);
   const [dragOverTarget, setDragOverTarget] = useState<null | 'video1' | 'video2' | 'bgm'>(null);
   const [dropError, setDropError] = useState<string | null>(null);
+  const [bgmStartMode, setBgmStartMode] = useState<'beginning' | 'end' | 'custom'>('beginning');
+  const [bgmLengthMode, setBgmLengthMode] = useState<'full' | 'custom'>('full');
 
   const previewVideo1 = batchVideo1[0] ?? null;
   const previewVideo2 = batchVideo2[0] ?? null;
@@ -88,6 +90,11 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   }, [previewVideo1, previewVideo2]);
 
   useEffect(() => {
+    setBgmStartMode('beginning');
+    setBgmLengthMode('full');
+  }, [config.bgm?.id]);
+
+  useEffect(() => {
     if (!config.bgm) {
       return;
     }
@@ -99,14 +106,34 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       return;
     }
     const targetDuration = getBgmTargetDuration();
-    const clamped = clampBgmToTarget(config.bgm, targetDuration);
+    let next = config.bgm;
+    if (bgmLengthMode === 'full') {
+      next = { ...next, playLength: next.duration || next.playLength };
+    }
+    next = clampBgmToTarget(next, targetDuration);
+    if (bgmStartMode === 'beginning') {
+      next = { ...next, startTime: 0 };
+    }
+    if (bgmStartMode === 'end') {
+      next = { ...next, startTime: Math.max(0, targetDuration - next.playLength) };
+    }
+    const clamped = clampBgmToTarget(next, targetDuration);
     if (clamped.playLength !== config.bgm.playLength || clamped.startTime !== config.bgm.startTime) {
       setConfig((prev) => ({
         ...prev,
         bgm: prev.bgm ? clamped : null,
       }));
     }
-  }, [previewVideo1, previewVideo2, config.bgm?.mode, config.bgm?.playLength, config.bgm?.startTime]);
+  }, [
+    previewVideo1,
+    previewVideo2,
+    config.bgm?.mode,
+    config.bgm?.duration,
+    config.bgm?.playLength,
+    config.bgm?.startTime,
+    bgmStartMode,
+    bgmLengthMode,
+  ]);
 
   const selectFromLibrary = (asset: LibraryAsset) => {
     setConfig(prev => ({
@@ -378,10 +405,40 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     updateBgm(clamped);
   };
 
+  const handleBgmLengthModeChange = (mode: 'full' | 'custom') => {
+    if (!config.bgm) {
+      return;
+    }
+    setBgmLengthMode(mode);
+    if (mode === 'full') {
+      const targetDuration = getBgmTargetDuration();
+      const clamped = clampBgmToTarget({ ...config.bgm, playLength: config.bgm.duration || config.bgm.playLength }, targetDuration);
+      updateBgm(clamped);
+    }
+  };
+
+  const handleBgmStartModeChange = (mode: 'beginning' | 'end' | 'custom') => {
+    if (!config.bgm) {
+      return;
+    }
+    setBgmStartMode(mode);
+    const targetDuration = getBgmTargetDuration();
+    if (mode === 'beginning') {
+      updateBgm({ startTime: 0 });
+      return;
+    }
+    if (mode === 'end') {
+      const playLength = Math.min(config.bgm.playLength, targetDuration);
+      updateBgm({ startTime: Math.max(0, targetDuration - playLength) });
+      return;
+    }
+  };
+
   const handleBgmLengthChange = (value: number) => {
     if (!config.bgm) {
       return;
     }
+    setBgmLengthMode('custom');
     const targetDuration = getBgmTargetDuration();
     const clamped = clampBgmToTarget({ ...config.bgm, playLength: value }, targetDuration);
     updateBgm(clamped);
@@ -391,37 +448,9 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     if (!config.bgm) {
       return;
     }
+    setBgmStartMode('custom');
     const targetDuration = getBgmTargetDuration();
     const clamped = clampBgmToTarget({ ...config.bgm, startTime: value }, targetDuration);
-    updateBgm(clamped);
-  };
-
-  const handleBgmUseFullAudio = () => {
-    if (!config.bgm) {
-      return;
-    }
-    const targetDuration = getBgmTargetDuration();
-    const clamped = clampBgmToTarget({ ...config.bgm, playLength: config.bgm.duration || 0 }, targetDuration);
-    updateBgm(clamped);
-  };
-
-  const handleBgmFillTarget = () => {
-    if (!config.bgm) {
-      return;
-    }
-    const targetDuration = getBgmTargetDuration();
-    const clamped = clampBgmToTarget({ ...config.bgm, playLength: targetDuration }, targetDuration);
-    updateBgm(clamped);
-  };
-
-  const handleBgmPlaceAtEnd = () => {
-    if (!config.bgm) {
-      return;
-    }
-    const targetDuration = getBgmTargetDuration();
-    const playLength = Math.min(config.bgm.playLength, targetDuration);
-    const startTime = Math.max(0, targetDuration - playLength);
-    const clamped = clampBgmToTarget({ ...config.bgm, startTime, playLength }, targetDuration);
     updateBgm(clamped);
   };
 
@@ -793,70 +822,133 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
 
                   <div className="space-y-2">
                     <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
-                      <span>Play Length</span>
-                      <span className="text-blue-600">{config.bgm.playLength}s</span>
+                      <span>Length</span>
+                      <span className="text-blue-600">{Math.round(config.bgm.playLength)}s</span>
                     </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max={bgmPlayLengthMax}
-                      step="1"
-                      value={config.bgm.playLength}
-                      onChange={(e) => handleBgmLengthChange(parseInt(e.target.value))}
-                      className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-blue-600"
-                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => handleBgmLengthModeChange('full')}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                          bgmLengthMode === 'full'
+                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                            : 'bg-white text-slate-400 border-slate-200 hover:border-blue-200 hover:text-blue-600'
+                        }`}
+                      >
+                        Full Track
+                      </button>
+                      <button
+                        onClick={() => handleBgmLengthModeChange('custom')}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                          bgmLengthMode === 'custom'
+                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                            : 'bg-white text-slate-400 border-slate-200 hover:border-blue-200 hover:text-blue-600'
+                        }`}
+                      >
+                        Custom Length
+                      </button>
+                    </div>
+                    {bgmLengthMode === 'custom' ? (
+                      <input
+                        type="range"
+                        min="1"
+                        max={bgmPlayLengthMax}
+                        step="1"
+                        value={config.bgm.playLength}
+                        onChange={(e) => handleBgmLengthChange(parseInt(e.target.value))}
+                        className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-blue-600"
+                      />
+                    ) : (
+                      <div className="text-[10px] font-bold text-slate-400">
+                        Using the full track length.
+                      </div>
+                    )}
                     <div className="flex justify-between text-[10px] font-bold text-slate-400">
-                      <span>Clip Max: {bgmPlayLengthMax}s</span>
-                      <span>Audio: {bgmDuration}s</span>
+                      <span>Target: {Math.round(bgmTargetDuration || 0)}s</span>
+                      <span>Audio: {Math.round(bgmDuration || 0)}s</span>
                     </div>
-                    <div className="flex flex-wrap gap-2 pt-1">
-                      <button
-                        onClick={handleBgmUseFullAudio}
-                        className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 hover:bg-slate-200"
-                      >
-                        Use Full Audio
-                      </button>
-                      <button
-                        onClick={handleBgmFillTarget}
-                        className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 hover:bg-slate-200"
-                      >
-                        Fill Target
-                      </button>
-                    </div>
+                    {bgmLengthMode === 'full' && bgmDuration > bgmTargetDuration && (
+                      <div className="text-[10px] font-bold text-amber-500 bg-amber-50 border border-amber-100 rounded-2xl px-3 py-2">
+                        Track is longer than the target clip. It will be trimmed to fit.
+                      </div>
+                    )}
                     {bgmAutoLoop && (
                       <div className="flex items-center gap-2 text-[10px] font-bold text-blue-600 bg-blue-50 rounded-lg px-2 py-1 border border-blue-100">
                         <div className="w-1.5 h-1.5 rounded-full bg-blue-600"></div>
-                        Auto-looping enabled (length &gt; audio)
+                        Auto-looping enabled because length exceeds the track.
                       </div>
                     )}
                   </div>
 
                   <div className="space-y-2">
                     <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
-                      <span>Start Time</span>
+                      <span>Start</span>
                       <span className="text-blue-600">{bgmStartTime}s</span>
                     </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max={bgmStartTimeMax}
-                      step="1"
-                      value={bgmStartTime}
-                      onChange={(e) => handleBgmStartChange(parseInt(e.target.value))}
-                      className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-blue-600"
-                    />
-                    <div className="flex justify-between text-[10px] font-bold text-slate-400">
-                      <span>Max Start: {bgmStartTimeMax}s</span>
-                      <span>Target: {Math.round(bgmTargetDuration || 0)}s</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2 pt-1">
+                    <div className="grid grid-cols-3 gap-2">
                       <button
-                        onClick={handleBgmPlaceAtEnd}
-                        className="px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-slate-100 text-slate-500 hover:bg-slate-200"
+                        onClick={() => handleBgmStartModeChange('beginning')}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                          bgmStartMode === 'beginning'
+                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                            : 'bg-white text-slate-400 border-slate-200 hover:border-blue-200 hover:text-blue-600'
+                        }`}
                       >
-                        Place At End
+                        Beginning
+                      </button>
+                      <button
+                        onClick={() => handleBgmStartModeChange('end')}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                          bgmStartMode === 'end'
+                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                            : 'bg-white text-slate-400 border-slate-200 hover:border-blue-200 hover:text-blue-600'
+                        }`}
+                      >
+                        End
+                      </button>
+                      <button
+                        onClick={() => handleBgmStartModeChange('custom')}
+                        className={`px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${
+                          bgmStartMode === 'custom'
+                            ? 'bg-blue-600 text-white border-blue-700 shadow-sm'
+                            : 'bg-white text-slate-400 border-slate-200 hover:border-blue-200 hover:text-blue-600'
+                        }`}
+                      >
+                        Custom
                       </button>
                     </div>
+                    {bgmStartMode === 'custom' ? (
+                      <>
+                        <input
+                          type="range"
+                          min="0"
+                          max={bgmStartTimeMax}
+                          step="1"
+                          value={bgmStartTime}
+                          onChange={(e) => handleBgmStartChange(parseInt(e.target.value))}
+                          className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-blue-600"
+                        />
+                        <div className="flex justify-between text-[10px] font-bold text-slate-400">
+                          <span>Max Start: {bgmStartTimeMax}s</span>
+                          <span>Target: {Math.round(bgmTargetDuration || 0)}s</span>
+                        </div>
+                        <div className="text-[10px] font-bold text-slate-400">
+                          Pick exactly where the music should begin within the target.
+                        </div>
+                      </>
+                    ) : bgmStartMode === 'end' ? (
+                      <div className="space-y-1 text-[10px] font-bold text-slate-400">
+                        <p>Starts the music so it finishes at the end using the selected length.</p>
+                        {bgmLengthMode === 'custom' && (
+                          <p className="text-amber-500">
+                            End uses your custom length. Switch to Full Track to place the entire song.
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-[10px] font-bold text-slate-400">
+                        Starts at the beginning of the target clip.
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-2">
