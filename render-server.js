@@ -48,8 +48,8 @@ const sanitizeName = (value) => {
   return text.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160) || 'asset';
 };
 
-const MIN_DB = -20;
-const MAX_DB = 20;
+const MIN_DB = -40;
+const MAX_DB = 40;
 
 const clampDb = (value) => Math.min(MAX_DB, Math.max(MIN_DB, value));
 

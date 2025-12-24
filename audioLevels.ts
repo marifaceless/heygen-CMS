@@ -1,5 +1,5 @@
-export const MIN_DB = -20;
-export const MAX_DB = 20;
+export const MIN_DB = -40;
+export const MAX_DB = 40;
 
 export const clampDb = (value: number): number => Math.min(MAX_DB, Math.max(MIN_DB, value));
 

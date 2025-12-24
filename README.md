@@ -108,7 +108,7 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
   - End starts the music so it finishes at the end of the target clip using the selected length.
   - Length can be Full Track or Custom Length.
   - Looping is auto-enabled if the selected length exceeds the audio duration.
-  - Volume uses dB (-20 to +20). 0 dB = original.
+  - Volume uses dB (-40 to +40). 0 dB = original.
 - Preview audio: click the preview window once to enable clip + BGM audio in the preview.
 
 ## Local persistence

@@ -1230,8 +1230,8 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
                     </div>
                     <input
                       type="range"
-                      min={-20}
-                      max={20}
+                      min={-40}
+                      max={40}
                       step={1}
                       value={config.bgm.volumeDb}
                       onChange={(e) => updateBgm({ volumeDb: Math.round(parseFloat(e.target.value)) })}
