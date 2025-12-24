@@ -48,6 +48,28 @@ const sanitizeName = (value) => {
   return text.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 160) || 'asset';
 };
 
+const MIN_DB = -20;
+const MAX_DB = 20;
+
+const clampDb = (value) => Math.min(MAX_DB, Math.max(MIN_DB, value));
+
+const dbToGain = (db) => Math.pow(10, clampDb(db) / 20);
+
+const resolveVolumeGain = (bgm) => {
+  if (!bgm) {
+    return 1;
+  }
+  const volumeDb = Number.isFinite(Number(bgm.volumeDb)) ? Number(bgm.volumeDb) : null;
+  if (volumeDb !== null) {
+    return dbToGain(volumeDb);
+  }
+  const volume = Number.isFinite(Number(bgm.volume)) ? Number(bgm.volume) : null;
+  if (volume !== null) {
+    return volume;
+  }
+  return 1;
+};
+
 const normalizeFileUrl = (filePath) => pathToFileURL(filePath).toString();
 const MEDIA_BASE_URL = `http://localhost:${PORT}/media`;
 const CACHE_BASE_URL = `http://localhost:${PORT}/cache`;
@@ -497,7 +519,7 @@ const processQueue = async () => {
         path: toServedUrl(audioPath),
         duration: Math.max(0.01, audioMeta.duration || 0),
         playLength: Number(job.bgm.playLength || 0),
-        volume: Number(job.bgm.volume || 0.5),
+        volume: resolveVolumeGain(job.bgm),
         mode: job.bgm.mode,
         startTime: Number(job.bgm.startTime || 0),
         loop: Boolean(job.bgm.loop),
@@ -719,6 +741,8 @@ const bootstrap = async () => {
         }
       }
 
+      const bgmVolume = bgm ? resolveVolumeGain(bgm) : 1;
+
       enqueueJob({
         jobId,
         name: outputName,
@@ -730,7 +754,7 @@ const bootstrap = async () => {
           ? {
               path: bgm.path,
               playLength: Number(bgm.playLength || 0),
-              volume: Number(bgm.volume || 0.5),
+              volume: bgmVolume,
               mode: bgm.mode,
               startTime: Number(bgm.startTime || 0),
               loop: Boolean(bgm.loop),

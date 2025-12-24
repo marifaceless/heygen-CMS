@@ -1,4 +1,5 @@
 import { BGMMode, LibraryAsset, ProjectConfig, RenderStatus, VideoAsset, BGMAsset } from './types';
+import { clampDb, gainToDb } from './audioLevels';
 import { loadMediaUrl } from './mediaStore';
 
 const STORAGE_KEY = 'heygen_cms_state';
@@ -63,7 +64,15 @@ const sanitizeBgmAsset = (value: unknown): BGMAsset | null => {
   const duration = asNumber(value.duration, 0);
   const startTime = asNumber(value.startTime, 0);
   const playLength = asNumber(value.playLength, 0);
-  const volume = asNumber(value.volume, 0.5);
+  const volumeDbRaw = asNumber(value.volumeDb, Number.NaN);
+  let volumeDb = Number.isFinite(volumeDbRaw) ? volumeDbRaw : null;
+  if (volumeDb === null) {
+    const legacyVolume = asNumber(value.volume, Number.NaN);
+    if (Number.isFinite(legacyVolume)) {
+      volumeDb = gainToDb(legacyVolume);
+    }
+  }
+  const normalizedVolumeDb = clampDb(volumeDb ?? 0);
   const modeValue = asString(value.mode);
   const mode = Object.values(BGMMode).includes(modeValue as BGMMode) ? (modeValue as BGMMode) : BGMMode.FULL;
   const loop = asBoolean(value.loop, false);
@@ -72,7 +81,7 @@ const sanitizeBgmAsset = (value: unknown): BGMAsset | null => {
     return null;
   }
 
-  return { id, name, url, duration, startTime, playLength, volume, mode, loop };
+  return { id, name, url, duration, startTime, playLength, volumeDb: normalizedVolumeDb, mode, loop };
 };
 
 const sanitizeLibraryAsset = (value: unknown): LibraryAsset | null => {

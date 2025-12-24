@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ICONS } from '../constants';
 import { ProjectConfig, BGMMode, BGMAsset, LibraryAsset, VideoAsset } from '../types';
+import { clampDb, dbToGain, formatDb } from '../audioLevels';
 import { saveMediaBlob } from '../mediaStore';
 import { getMediaDuration } from '../mediaDuration';
 
@@ -35,6 +36,10 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioTimers = useRef<{ start?: number; stop?: number }>({});
   const audioKickoff = useRef(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioGainRef = useRef<GainNode | null>(null);
+  const audioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const audioElementRef = useRef<HTMLAudioElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const previewVideo1 = batchVideo1[0] ?? null;
@@ -150,7 +155,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
         duration: asset.duration,
         startTime: 0,
         playLength: 30,
-        volume: 0.5,
+        volumeDb: 0,
         mode: BGMMode.FULL,
         loop: false
       }
@@ -189,7 +194,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       duration: safeDuration,
       startTime: 0,
       playLength: 30,
-      volume: 0.5,
+      volumeDb: 0,
       mode: BGMMode.FULL,
       loop: false,
     };
@@ -414,15 +419,67 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     audio.currentTime = 0;
   };
 
-  const startPreviewAudio = (settings: { delayMs: number; playLength: number; loop: boolean; volume: number }) => {
+  const ensureAudioGraph = () => {
+    const audio = audioRef.current;
+    if (!audio || typeof window === 'undefined') {
+      return null;
+    }
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) {
+      return null;
+    }
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContextClass();
+    }
+    const context = audioContextRef.current;
+    if (!audioGainRef.current) {
+      audioGainRef.current = context.createGain();
+      audioGainRef.current.gain.value = 1;
+      audioGainRef.current.connect(context.destination);
+    }
+    if (!audioSourceRef.current || audioElementRef.current !== audio) {
+      if (audioSourceRef.current) {
+        audioSourceRef.current.disconnect();
+      }
+      audioSourceRef.current = context.createMediaElementSource(audio);
+      audioSourceRef.current.connect(audioGainRef.current);
+      audioElementRef.current = audio;
+    }
+    audio.volume = 1;
+    return { context, gain: audioGainRef.current };
+  };
+
+  const setPreviewGain = (gain: number) => {
+    const graph = ensureAudioGraph();
+    const clamped = Math.max(0, gain);
+    if (!graph) {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.volume = Math.min(1, clamped);
+      }
+      return;
+    }
+    const now = graph.context.currentTime;
+    graph.gain.gain.cancelScheduledValues(now);
+    graph.gain.gain.setValueAtTime(graph.gain.gain.value, now);
+    graph.gain.gain.linearRampToValueAtTime(clamped, now + 0.03);
+  };
+
+  const startPreviewAudio = (settings: { delayMs: number; playLength: number; loop: boolean; gain: number }) => {
     const audio = audioRef.current;
     if (!audio) {
       return;
     }
     stopPreviewAudio();
-    const targetVolume = Math.min(1, Math.max(0, settings.volume));
+    const targetGain = Math.max(0, settings.gain);
     const shouldDelay = settings.delayMs > 0;
-    audio.volume = shouldDelay ? 0 : targetVolume;
+    if (shouldDelay) {
+      setPreviewGain(0);
+    } else {
+      setPreviewGain(targetGain);
+    }
     audio.loop = settings.loop;
     audio.currentTime = 0;
 
@@ -432,7 +489,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       });
       if (shouldDelay) {
         audioTimers.current.start = window.setTimeout(() => {
-          audio.volume = targetVolume;
+          setPreviewGain(targetGain);
         }, settings.delayMs);
       }
       if (settings.playLength > 0) {
@@ -448,10 +505,19 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   };
 
   const updateBgm = (updates: Partial<BGMAsset>) => {
-    setConfig((prev) => ({
-      ...prev,
-      bgm: prev.bgm ? { ...prev.bgm, ...updates } : null,
-    }));
+    setConfig((prev) => {
+      if (!prev.bgm) {
+        return prev;
+      }
+      const next = { ...prev.bgm, ...updates };
+      if (typeof updates.volumeDb === 'number') {
+        next.volumeDb = clampDb(updates.volumeDb);
+      }
+      return {
+        ...prev,
+        bgm: next,
+      };
+    });
   };
 
   const handleBgmModeChange = (mode: BGMMode) => {
@@ -568,13 +634,19 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     if (!audioUnlocked) {
       setAudioUnlocked(true);
     }
+    const graph = ensureAudioGraph();
+    if (graph && graph.context.state === 'suspended') {
+      graph.context.resume().catch(() => {
+        // ignore resume failures from autoplay policies
+      });
+    }
     if (previewAudioSettings) {
       audioKickoff.current = true;
       startPreviewAudio({
         delayMs: previewAudioSettings.delayMs,
         playLength: previewAudioSettings.playLength,
         loop: previewAudioSettings.loop,
-        volume: previewAudioSettings.volume,
+        gain: previewAudioSettings.gain,
       });
     }
     const video = videoRef.current;
@@ -654,14 +726,14 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       delayMs: startTime * 1000,
       playLength,
       loop: bgmLoopActive,
-      volume: config.bgm.volume,
+      gain: dbToGain(config.bgm.volumeDb),
     };
   })();
   const previewAudioActive = audioUnlocked && Boolean(previewAudioSettings);
   const previewDelayMs = previewAudioSettings?.delayMs ?? 0;
   const previewPlayLength = previewAudioSettings?.playLength ?? 0;
   const previewLoop = previewAudioSettings?.loop ?? false;
-  const previewVolume = previewAudioSettings?.volume ?? 0;
+  const previewGain = previewAudioSettings?.gain ?? 0;
 
   useEffect(() => {
     if (!audioUnlocked || !previewAudioActive || !config.bgm?.url) {
@@ -676,7 +748,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       delayMs: previewDelayMs,
       playLength: previewPlayLength,
       loop: previewLoop,
-      volume: previewVolume,
+      gain: previewGain,
     });
     return () => {
       stopPreviewAudio();
@@ -687,7 +759,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     previewDelayMs,
     previewPlayLength,
     previewLoop,
-    previewVolume,
+    previewGain,
     config.bgm?.url,
   ]);
 
@@ -1154,17 +1226,20 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
                   <div className="space-y-2 pt-2">
                     <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
                       <span>Volume</span>
-                      <span className="text-blue-600">{Math.round(config.bgm.volume * 100)}%</span>
+                      <span className="text-blue-600">{formatDb(config.bgm.volumeDb)}</span>
                     </div>
                     <input
                       type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={config.bgm.volume}
-                      onChange={(e) => updateBgm({ volume: parseFloat(e.target.value) })}
+                      min={-20}
+                      max={20}
+                      step={1}
+                      value={config.bgm.volumeDb}
+                      onChange={(e) => updateBgm({ volumeDb: parseFloat(e.target.value) })}
                       className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-blue-600"
                     />
+                    <div className="text-[10px] font-bold text-slate-400">
+                      0 dB = original volume. Boosts above 0 dB may clip.
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1238,7 +1313,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
   id: config.id || "TEMP",
   bgm: config.bgm ? {
     len: config.bgm.playLength,
-    vol: config.bgm.volume,
+    volDb: config.bgm.volumeDb,
     mode: config.bgm.mode,
     loop: bgmLoopActive,
     start: config.bgm.startTime

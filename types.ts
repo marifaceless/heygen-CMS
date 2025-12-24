@@ -21,7 +21,7 @@ export interface BGMAsset {
   duration: number;
   startTime: number;
   playLength: number;
-  volume: number;
+  volumeDb: number;
   mode: BGMMode;
   loop: boolean;
 }

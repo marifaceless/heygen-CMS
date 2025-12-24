@@ -108,14 +108,14 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
 
     const bgm = item.bgm
       ? {
-          path: bgmPath,
-          duration: item.bgm.duration,
-          playLength: item.bgm.playLength,
-          volume: item.bgm.volume,
-          mode: item.bgm.mode,
-          startTime: item.bgm.startTime || 0,
-          loop: item.bgm.loop || (item.bgm.duration > 0 && item.bgm.playLength > item.bgm.duration),
-        }
+        path: bgmPath,
+        duration: item.bgm.duration,
+        playLength: item.bgm.playLength,
+        volumeDb: item.bgm.volumeDb,
+        mode: item.bgm.mode,
+        startTime: item.bgm.startTime || 0,
+        loop: item.bgm.loop || (item.bgm.duration > 0 && item.bgm.playLength > item.bgm.duration),
+      }
       : null;
 
     const response = await fetch('/api/render', {

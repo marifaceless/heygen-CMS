@@ -233,7 +233,7 @@ const main = async () => {
         exportQuality: '720p',
         video1: { path: uploaded1, duration: 3 },
         video2: { path: uploaded2, duration: 3 },
-        bgm: { path: uploaded3, playLength: 6, volume: 0.2, mode: 'FULL', loop: false },
+        bgm: { path: uploaded3, playLength: 6, volumeDb: -14, mode: 'FULL', loop: false },
       }),
     });
 
@@ -279,7 +279,7 @@ const main = async () => {
         exportQuality: '720p',
         video1: { path: uploaded1, duration: 3 },
         video2: null,
-        bgm: { path: uploaded3, playLength: 2, startTime: 1, volume: 0.2, mode: 'VIDEO1_ONLY', loop: false },
+        bgm: { path: uploaded3, playLength: 2, startTime: 1, volumeDb: -14, mode: 'VIDEO1_ONLY', loop: false },
       }),
     });
 
