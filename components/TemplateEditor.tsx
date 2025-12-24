@@ -1234,7 +1234,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
                       max={20}
                       step={1}
                       value={config.bgm.volumeDb}
-                      onChange={(e) => updateBgm({ volumeDb: parseFloat(e.target.value) })}
+                      onChange={(e) => updateBgm({ volumeDb: Math.round(parseFloat(e.target.value)) })}
                       className="w-full h-1.5 bg-slate-100 rounded-full appearance-none cursor-pointer accent-blue-600"
                     />
                     <div className="text-[10px] font-bold text-slate-400">
