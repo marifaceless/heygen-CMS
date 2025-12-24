@@ -13,9 +13,9 @@ if not exist package.json (
 rem Install dependencies if needed, then start the dev server.
 if not exist node_modules (
   echo Installing dependencies...
-  npm install
+  call npm install
   if errorlevel 1 exit /b 1
 )
 
 echo Starting the app + render server...
-npm run dev:all
+call npm run dev:all
