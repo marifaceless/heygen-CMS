@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ICONS } from '../constants';
 import { ProjectConfig } from '../types';
 import { loadMediaBlob } from '../mediaStore';
@@ -12,6 +12,7 @@ interface BatchQueueProps {
 
 export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onClear }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const batchController = useRef<{ cancelled: boolean }>({ cancelled: false });
   const activeItem = items.find((item) => item.status === 'RENDERING') || null;
   const isActivelyRendering = isProcessing || Boolean(activeItem);
 
@@ -61,6 +62,9 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
 
   const pollJob = async (jobId: string, itemId: string) => {
     while (true) {
+      if (batchController.current.cancelled) {
+        return;
+      }
       const response = await fetch(`/api/render/${jobId}`);
       if (!response.ok) {
         if (response.status === 404) {
@@ -185,11 +189,54 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
     });
   };
 
+  const flushQueue = async () => {
+    if (items.length === 0) {
+      onClear();
+      return;
+    }
+
+    const confirmed = window.confirm(
+      [
+        'Flush the queue?',
+        '',
+        'This will:',
+        '- Cancel any active render',
+        '- Remove all items from the queue',
+        '',
+        'Continue?',
+      ].join('\n')
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    batchController.current.cancelled = true;
+    setIsProcessing(false);
+
+    const jobIds = Array.from(
+      new Set(items.map((item) => item.jobId).filter((value): value is string => Boolean(value)))
+    );
+
+    await Promise.all(
+      jobIds.map((jobId) =>
+        fetch(`/api/render/${jobId}/cancel`, { method: 'POST' }).catch(() => null)
+      )
+    );
+
+    onClear();
+    batchController.current.cancelled = false;
+  };
+
   const startBatchRender = async () => {
     if (items.length === 0) return;
+    batchController.current.cancelled = false;
     setIsProcessing(true);
 
     for (const item of items) {
+      if (batchController.current.cancelled) {
+        break;
+      }
       if (item.status === 'COMPLETED' || item.status === 'RENDERING') continue;
       try {
         await renderQueueItem(item);
@@ -233,9 +280,8 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
         <div className="flex gap-4">
           {items.length > 0 && (
             <button 
-              onClick={onClear} 
-              disabled={isActivelyRendering}
-              className="px-6 py-4 text-xs font-black text-red-400 uppercase tracking-widest hover:text-red-600 disabled:opacity-30"
+              onClick={flushQueue}
+              className="px-6 py-4 text-xs font-black text-red-400 uppercase tracking-widest hover:text-red-600"
             >
               Flush Queue
             </button>

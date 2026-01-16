@@ -814,6 +814,7 @@ const cancelJob = (jobId) => {
     return { ok: true, message: 'Job cancelled.' };
   }
 
+  updateJob(jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
   return { ok: true, message: 'Job cancelled.' };
 };
 

@@ -244,7 +244,13 @@ const App: React.FC = () => {
     setQueue(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
   };
 
-  const clearQueue = () => setQueue([]);
+  const clearQueue = () => {
+    activeJobPolls.current.forEach((controller) => {
+      controller.cancelled = true;
+    });
+    activeJobPolls.current.clear();
+    setQueue([]);
+  };
 
   const addToLibrary = (asset: LibraryAsset) => {
     setLibrary(prev => [asset, ...prev]);
