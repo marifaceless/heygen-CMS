@@ -122,7 +122,11 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
 - Rendering runs on your local machine via `render-server.js`.
 - The render server listens on `http://localhost:5050` and the Vite dev server proxies `/api` requests.
 - Outputs are saved to `renders/output`.
+- Default output is `720p` H.264 (balanced for speed + file size).
 - Output is rendered at `24fps` (inputs are normalized to 24fps CFR automatically for stability).
+- Queue progress is end-to-end (`0–100%`) and includes preprocessing + rendering + encoding.
+- If the UI dev server uses port `3000`, Remotion will now pick a separate free port automatically (override with `REMOTION_SERVE_PORT`).
+- Rendering uses parallel frame rendering. Override with `RENDER_CONCURRENCY` (default `5`) if your machine gets sluggish.
 - Ensure you have `ffmpeg` + `ffprobe` installed.
 - Render job progress persists across browser refreshes while the render server is running.
 - You can cancel an in-progress render from the Queue UI (jobs will show as `CANCELLED`).

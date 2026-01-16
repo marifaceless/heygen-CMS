@@ -7,6 +7,7 @@ import fs from 'fs/promises';
 import fsSync from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { spawn } from 'child_process';
+import net from 'net';
 import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition, makeCancelSignal } from '@remotion/renderer';
 
@@ -29,6 +30,46 @@ const JOBS_FILE = path.join(RENDER_DIR, 'jobs.json');
 
 const COMPOSITION_ID = 'heygen-cms';
 const ENTRY_POINT = path.join(ROOT_DIR, 'remotion', 'index.tsx');
+
+const RENDER_CONCURRENCY = (() => {
+  const raw = Number(process.env.RENDER_CONCURRENCY);
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return 5;
+})();
+
+const OFFTHREAD_VIDEO_THREADS = (() => {
+  const raw = Number(process.env.OFFTHREAD_VIDEO_THREADS);
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return 2;
+})();
+
+const REMOTION_SERVE_PORT = (() => {
+  const raw = Number(process.env.REMOTION_SERVE_PORT);
+  if (Number.isFinite(raw) && raw > 0) {
+    return Math.floor(raw);
+  }
+  return null;
+})();
+
+const getFreePort = () =>
+  new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') {
+        server.close();
+        reject(new Error('Unable to allocate port'));
+        return;
+      }
+      const port = address.port;
+      server.close(() => resolve(port));
+    });
+  });
 
 const ensureDir = async (dir) => {
   await fs.mkdir(dir, { recursive: true });
@@ -90,22 +131,95 @@ const toServedUrl = (filePath) => {
   return normalizeFileUrl(filePath);
 };
 
-const runFfmpeg = (args, controller) =>
+const runFfmpegWithProgress = (args, controller, options = {}) =>
   new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', args, { stdio: 'ignore' });
+    const durationSeconds = Number(options.durationSeconds);
+    const hasDuration = Number.isFinite(durationSeconds) && durationSeconds > 0;
+    const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
+
+    const ffmpegArgs = onProgress
+      ? ['-nostats', '-progress', 'pipe:2', ...args]
+      : args;
+
+    const proc = spawn('ffmpeg', ffmpegArgs, { stdio: onProgress ? ['ignore', 'ignore', 'pipe'] : 'ignore' });
     if (controller) {
       controller.activeProcess = proc;
     }
+
+    let buffered = '';
+    let lastReported = -1;
+    let lastReportAt = 0;
+    let stderrTail = '';
+
+    const maybeReport = (fraction) => {
+      if (!onProgress || !Number.isFinite(fraction)) {
+        return;
+      }
+      const clamped = Math.max(0, Math.min(1, fraction));
+      const now = Date.now();
+      if (clamped <= lastReported && now - lastReportAt < 800) {
+        return;
+      }
+      if (now - lastReportAt < 200) {
+        return;
+      }
+      lastReported = Math.max(lastReported, clamped);
+      lastReportAt = now;
+      onProgress(lastReported);
+    };
+
+    if (onProgress) {
+      proc.stderr.on('data', (chunk) => {
+        const text = chunk.toString();
+        buffered += text;
+        stderrTail = (stderrTail + text).slice(-8000);
+
+        const lines = buffered.split('\n');
+        buffered = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            continue;
+          }
+          if (trimmed === 'progress=end') {
+            maybeReport(1);
+            continue;
+          }
+          if (!hasDuration) {
+            continue;
+          }
+          if (trimmed.startsWith('out_time_ms=')) {
+            const value = Number(trimmed.slice('out_time_ms='.length));
+            if (!Number.isFinite(value)) {
+              continue;
+            }
+            maybeReport(value / (durationSeconds * 1_000_000));
+            continue;
+          }
+          if (trimmed.startsWith('out_time_us=')) {
+            const value = Number(trimmed.slice('out_time_us='.length));
+            if (!Number.isFinite(value)) {
+              continue;
+            }
+            maybeReport(value / (durationSeconds * 1_000_000));
+          }
+        }
+      });
+    }
+
     proc.on('error', reject);
     proc.on('close', (code) => {
       if (controller && controller.activeProcess === proc) {
         controller.activeProcess = null;
       }
       if (code === 0) {
+        if (onProgress) {
+          onProgress(1);
+        }
         resolve();
         return;
       }
-      reject(new Error(`ffmpeg exited with code ${code}`));
+      reject(new Error(`ffmpeg exited with code ${code}${stderrTail ? `: ${stderrTail.trim()}` : ''}`));
     });
   });
 
@@ -188,15 +302,6 @@ const probeMedia = async (filePath) => {
   };
 };
 
-const hashFile = (filePath) =>
-  new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const stream = fsSync.createReadStream(filePath);
-    stream.on('error', reject);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve(hash.digest('hex')));
-  });
-
 const getAssetIdFromPath = (filePath) => {
   const base = path.basename(filePath);
   const dashIndex = base.indexOf('-');
@@ -208,9 +313,20 @@ const getAssetIdFromPath = (filePath) => {
 
 const isNearly = (a, b, epsilon = 0.05) => Math.abs(a - b) <= epsilon;
 
-const normalizeVideoTo24Fps = async (inputPath, controller) => {
+const getQuickCacheKey = (filePath) => {
+  const stat = fsSync.statSync(filePath);
+  const size = Number(stat.size) || 0;
+  const mtimeMs = Number(stat.mtimeMs) || 0;
+  return `${size}-${Math.round(mtimeMs)}`;
+};
+
+const normalizeVideoTo24Fps = async (inputPath, controller, options = {}) => {
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const assetId = getAssetIdFromPath(inputPath);
   const meta = await probeMedia(inputPath);
+  if (onProgress) {
+    onProgress(0);
+  }
   if (
     meta.video &&
     meta.video.codec === 'h264' &&
@@ -218,18 +334,22 @@ const normalizeVideoTo24Fps = async (inputPath, controller) => {
     isNearly(meta.video.avgFps, 24) &&
     isNearly(meta.video.rFps || meta.video.avgFps, meta.video.avgFps)
   ) {
+    if (onProgress) {
+      onProgress(1);
+    }
     return inputPath;
   }
 
-  const inputHash = await hashFile(inputPath);
+  const inputHash = getQuickCacheKey(inputPath);
   await ensureDir(CACHE_VIDEO_DIR);
 
   const outputPath = path.join(CACHE_VIDEO_DIR, `${assetId}-${inputHash}-cfr24.mp4`);
   if (await fileExists(outputPath)) {
+    if (onProgress) {
+      onProgress(1);
+    }
     return outputPath;
   }
-
-  const hasAudio = Boolean(meta.audio);
 
   const args = [
     '-y',
@@ -249,30 +369,45 @@ const normalizeVideoTo24Fps = async (inputPath, controller) => {
     '18',
     '-movflags',
     '+faststart',
+    '-an',
   ];
 
-  if (hasAudio) {
-    args.push('-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2');
-  } else {
-    args.push('-an');
-  }
-
   args.push(outputPath);
-  await runFfmpeg(args, controller);
+  await runFfmpegWithProgress(args, controller, {
+    durationSeconds: meta.duration || 0,
+    onProgress: onProgress ? (p) => onProgress(0.25 + p * 0.75) : null,
+  });
+  if (onProgress) {
+    onProgress(1);
+  }
   return outputPath;
 };
 
-const transcodeAudioToWav = async (inputPath, controller) => {
+const transcodeAudioToWav = async (inputPath, controller, options = {}) => {
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const assetId = getAssetIdFromPath(inputPath);
-  const inputHash = await hashFile(inputPath);
+  const meta = await probeMedia(inputPath);
+  if (onProgress) {
+    onProgress(0);
+  }
+  const inputHash = getQuickCacheKey(inputPath);
   await ensureDir(CACHE_AUDIO_DIR);
 
   const outputPath = path.join(CACHE_AUDIO_DIR, `${assetId}-${inputHash}-48k.wav`);
   if (await fileExists(outputPath)) {
+    if (onProgress) {
+      onProgress(1);
+    }
     return outputPath;
   }
 
-  await runFfmpeg(['-y', '-i', inputPath, '-acodec', 'pcm_s16le', '-ar', '48000', outputPath], controller);
+  await runFfmpegWithProgress(['-y', '-i', inputPath, '-acodec', 'pcm_s16le', '-ar', '48000', outputPath], controller, {
+    durationSeconds: meta.duration || 0,
+    onProgress: onProgress ? (p) => onProgress(0.25 + p * 0.75) : null,
+  });
+  if (onProgress) {
+    onProgress(1);
+  }
   return outputPath;
 };
 
@@ -471,7 +606,32 @@ const processQueue = async () => {
   const { cancelSignal, cancel } = makeCancelSignal();
   const controller = { cancelled: false, cancel, cancelSignal, activeProcess: null };
   jobControllers.set(job.jobId, controller);
-  updateJob(job.jobId, { status: 'normalizing', progress: 1, error: null });
+
+  const createProgressUpdater = () => {
+    let last = -1;
+    let lastAt = 0;
+    return (value) => {
+      if (controller.cancelled) {
+        return;
+      }
+      const next = Math.max(0, Math.min(99, Math.round(Number(value) || 0)));
+      const now = Date.now();
+      if (next <= last && now - lastAt < 800) {
+        return;
+      }
+      if (now - lastAt < 150) {
+        return;
+      }
+      last = Math.max(last, next);
+      lastAt = now;
+      updateJob(job.jobId, { progress: last });
+    };
+  };
+
+  const setProgress = createProgressUpdater();
+  const PREPROCESS_MAX = 25;
+
+  updateJob(job.jobId, { status: 'normalizing', progress: 0, error: null });
 
   try {
     if (controller.cancelled) {
@@ -479,9 +639,12 @@ const processQueue = async () => {
       return;
     }
 
-    const normalizeVideoInput = async (inputPath) => {
-      const normalizedPath = await normalizeVideoTo24Fps(inputPath, controller);
+    const normalizeVideoInput = async (inputPath, onProgress) => {
+      const normalizedPath = await normalizeVideoTo24Fps(inputPath, controller, { onProgress });
       const meta = await probeMedia(normalizedPath);
+      if (typeof onProgress === 'function') {
+        onProgress(1);
+      }
       return {
         path: normalizedPath,
         url: toServedUrl(normalizedPath),
@@ -489,14 +652,38 @@ const processQueue = async () => {
       };
     };
 
-    const normalizedVideo1 = await normalizeVideoInput(job.video1Path);
+    const tasks = [
+      { label: 'video1' },
+      ...(job.video2Path ? [{ label: 'video2' }] : []),
+      ...(job.bgm?.path ? [{ label: 'bgm' }] : []),
+    ];
+
+    const taskCount = Math.max(1, tasks.length);
+    const taskSpan = PREPROCESS_MAX / taskCount;
+
+    const runTask = async (index, runner) => {
+      const base = index * taskSpan;
+      setProgress(base);
+      await runner((p) => {
+        const clamped = Math.max(0, Math.min(1, Number(p) || 0));
+        setProgress(base + clamped * taskSpan);
+      });
+      setProgress(base + taskSpan);
+    };
+
+    let normalizedVideo1 = null;
+    await runTask(0, async (onTaskProgress) => {
+      normalizedVideo1 = await normalizeVideoInput(job.video1Path, onTaskProgress);
+    });
     if (controller.cancelled) {
       updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
       return;
     }
     let normalizedVideo2 = { url: '', duration: 0 };
     if (job.video2Path) {
-      normalizedVideo2 = await normalizeVideoInput(job.video2Path);
+      await runTask(1, async (onTaskProgress) => {
+        normalizedVideo2 = await normalizeVideoInput(job.video2Path, onTaskProgress);
+      });
       if (controller.cancelled) {
         updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
         return;
@@ -508,12 +695,16 @@ const processQueue = async () => {
       video2Path: normalizedVideo2.url,
       video1Duration: normalizedVideo1.duration,
       video2Duration: normalizedVideo2.duration,
-      exportQuality: job.exportQuality || '1080p',
+      exportQuality: job.exportQuality || '720p',
       bgm: null,
     };
 
     if (job.bgm?.path) {
-      const audioPath = await transcodeAudioToWav(job.bgm.path, controller);
+      const bgmIndex = job.video2Path ? 2 : 1;
+      let audioPath = null;
+      await runTask(bgmIndex, async (onTaskProgress) => {
+        audioPath = await transcodeAudioToWav(job.bgm.path, controller, { onProgress: onTaskProgress });
+      });
       const audioMeta = await probeMedia(audioPath);
       inputProps.bgm = {
         path: toServedUrl(audioPath),
@@ -526,30 +717,41 @@ const processQueue = async () => {
       };
     }
 
-    updateJob(job.jobId, { status: 'rendering', progress: 5, error: null });
+    updateJob(job.jobId, { status: 'rendering', error: null });
+    setProgress(PREPROCESS_MAX);
+
+    const remotionPort = REMOTION_SERVE_PORT ?? (await getFreePort());
 
     const composition = await selectComposition({
       serveUrl,
       id: COMPOSITION_ID,
       inputProps,
       chromiumOptions,
+      port: remotionPort,
+      offthreadVideoThreads: OFFTHREAD_VIDEO_THREADS,
     });
 
     await renderMedia({
       serveUrl,
       composition,
       codec: 'h264',
+      crf: 24,
+      x264Preset: 'veryfast',
+      audioBitrate: '128k',
       outputLocation: job.outputPath,
       overwrite: true,
       inputProps,
       chromiumOptions,
+      port: remotionPort,
+      concurrency: RENDER_CONCURRENCY,
+      offthreadVideoThreads: OFFTHREAD_VIDEO_THREADS,
       cancelSignal: controller.cancelSignal,
       onProgress: ({ progress }) => {
         if (controller.cancelled) {
           return;
         }
-        const percentage = Math.min(100, Math.max(5, Math.round(5 + progress * 95)));
-        updateJob(job.jobId, { progress: percentage });
+        const clamped = Math.max(0, Math.min(1, Number(progress) || 0));
+        setProgress(PREPROCESS_MAX + clamped * (100 - PREPROCESS_MAX));
       },
     });
 
@@ -747,7 +949,7 @@ const bootstrap = async () => {
         jobId,
         name: outputName,
         outputPath,
-        exportQuality: exportQuality || '1080p',
+        exportQuality: exportQuality || '720p',
         video1Path: video1.path,
         video2Path: video2?.path || null,
         bgm: bgm?.path

@@ -304,18 +304,7 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
                </div>
 
                <div className="w-64 space-y-2">
-                  <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
-                     <span>{
-                       item.status === 'RENDERING'
-                         ? 'Processing Frames'
-                         : item.status === 'COMPLETED'
-                           ? 'Success'
-                           : item.status === 'FAILED'
-                             ? 'Failed'
-                             : item.status === 'CANCELLED'
-                               ? 'Cancelled'
-                             : 'Ready'
-                     }</span>
+                  <div className="flex justify-end text-[10px] font-black uppercase text-slate-400">
                      <span className="tabular-nums">{item.progress}%</span>
                   </div>
                   <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-50 shadow-inner">

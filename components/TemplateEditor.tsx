@@ -19,7 +19,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
     video1: null,
     video2: null,
     bgm: null,
-    exportQuality: '1080p',
+    exportQuality: '720p',
     status: 'PENDING',
     progress: 0
   });
@@ -622,7 +622,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
       video1: null,
       video2: null,
       bgm: null,
-      exportQuality: '1080p',
+      exportQuality: '720p',
       status: 'PENDING',
       progress: 0
     });

@@ -29,12 +29,12 @@ export const RemotionRoot: React.FC = () => {
         bgm: null,
       }}
       fps={FPS}
-      width={1920}
-      height={1080}
+      width={1280}
+      height={720}
       calculateMetadata={({ props }) => {
         const totalSeconds = Math.max(1, (props.video1Duration || 0) + (props.video2Duration || 0));
         const durationInFrames = Math.max(1, Math.round(totalSeconds * FPS));
-        const dimensions = getDimensions(props.exportQuality || '1080p');
+        const dimensions = getDimensions(props.exportQuality || '720p');
         return {
           durationInFrames,
           fps: FPS,
