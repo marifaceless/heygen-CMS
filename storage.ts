@@ -197,7 +197,13 @@ export const hydratePersistedState = async (state: PersistedState): Promise<Pers
     }
 
     const cached = urlCache.get(asset.id);
-    return cached ? { ...asset, url: cached } : asset;
+    if (cached) {
+      return { ...asset, url: cached };
+    }
+
+    // If we can't hydrate from IndexedDB (quota cleared, asset deleted, etc),
+    // drop the stale blob: URL from persisted state to avoid ERR_FILE_NOT_FOUND.
+    return { ...asset, url: '' };
   };
 
   const library = await Promise.all(state.library.map((asset) => hydrateAsset(asset)));

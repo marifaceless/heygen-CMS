@@ -15,13 +15,31 @@ export const BatchQueue: React.FC<BatchQueueProps> = ({ items, onUpdateItem, onC
   const activeItem = items.find((item) => item.status === 'RENDERING') || null;
   const isActivelyRendering = isProcessing || Boolean(activeItem);
 
-  const uploadAsset = async (asset: { id: string; name: string } | null, label: string) => {
+  const blobFromUrl = async (url: string): Promise<Blob | null> => {
+    if (!url) {
+      return null;
+    }
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        return null;
+      }
+      return await response.blob();
+    } catch {
+      return null;
+    }
+  };
+
+  const uploadAsset = async (asset: { id: string; name: string; url?: string } | null, label: string) => {
     if (!asset) {
       return null;
     }
-    const blob = await loadMediaBlob(asset.id);
+    let blob = await loadMediaBlob(asset.id);
+    if (!blob && asset.url) {
+      blob = await blobFromUrl(asset.url);
+    }
     if (!blob) {
-      throw new Error(`${label} file not found. Please re-import the asset.`);
+      throw new Error(`${label} file not found on this device. Please re-import the asset.`);
     }
 
     const formData = new FormData();

@@ -1271,7 +1271,7 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
               config.bgm && !audioUnlocked ? 'cursor-pointer' : ''
             }`}
           >
-            {previewClip ? (
+            {previewClip && previewClip.url ? (
               <div className="w-full h-full relative">
                 <video ref={videoRef} src={previewClip.url} className="w-full h-full object-cover opacity-60" autoPlay muted={!audioUnlocked} loop />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -1286,11 +1286,13 @@ export const TemplateEditor: React.FC<TemplateEditorProps> = ({ onEnqueue, libra
                     </div>
                   </div>
                 )}
-                {config.bgm?.url && <audio ref={audioRef} src={config.bgm.url} preload="auto" />}
+                {config.bgm?.url ? <audio ref={audioRef} src={config.bgm.url} preload="auto" /> : null}
               </div>
             ) : (
               <div className="w-full h-full flex items-center justify-center bg-[radial-gradient(circle_at_center,#1e293b_0%,#020617_100%)]">
-                <p className="text-slate-600 font-mono text-[10px] tracking-widest font-bold uppercase">Ready for local asset injection</p>
+                <p className="text-slate-600 font-mono text-[10px] tracking-widest font-bold uppercase">
+                  {previewClip ? 'Media missing (re-import the asset)' : 'Ready for local asset injection'}
+                </p>
               </div>
             )}
             
