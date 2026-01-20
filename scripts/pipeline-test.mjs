@@ -146,6 +146,26 @@ const detectSilenceEnd = async (filePath) => {
   return Number(match[1]);
 };
 
+const probeVolume = async (filePath) => {
+  const { stderr } = await run('ffmpeg', [
+    '-v',
+    'info',
+    '-i',
+    filePath,
+    '-af',
+    'volumedetect',
+    '-f',
+    'null',
+    '-',
+  ]);
+  const mean = stderr.match(/mean_volume:\s*([-\d.]+)\s*dB/);
+  const max = stderr.match(/max_volume:\s*([-\d.]+)\s*dB/);
+  return {
+    meanDb: mean ? Number(mean[1]) : null,
+    maxDb: max ? Number(max[1]) : null,
+  };
+};
+
 const within = (value, expected, tolerance) => Math.abs(value - expected) <= tolerance;
 
 const main = async () => {
@@ -157,6 +177,7 @@ const main = async () => {
 
   const video30 = path.join(TEST_DIR, 'video30.mp4');
   const video25 = path.join(TEST_DIR, 'video25.mp4');
+  const video30WithAudio = path.join(TEST_DIR, 'video30-with-audio.mp4');
   const audio = path.join(TEST_DIR, 'bgm.m4a');
 
   await run('ffmpeg', [
@@ -194,6 +215,30 @@ const main = async () => {
     '-f',
     'lavfi',
     '-i',
+    'testsrc2=size=1280x720:rate=30',
+    '-f',
+    'lavfi',
+    '-i',
+    'sine=frequency=440:sample_rate=48000',
+    '-t',
+    '3',
+    '-shortest',
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-c:a',
+    'aac',
+    '-b:a',
+    '160k',
+    video30WithAudio,
+  ]);
+
+  await run('ffmpeg', [
+    '-y',
+    '-f',
+    'lavfi',
+    '-i',
     'sine=frequency=440:sample_rate=48000',
     '-t',
     '6',
@@ -220,10 +265,12 @@ const main = async () => {
     const asset1 = crypto.randomBytes(6).toString('hex');
     const asset2 = crypto.randomBytes(6).toString('hex');
     const asset3 = crypto.randomBytes(6).toString('hex');
+    const asset4 = crypto.randomBytes(6).toString('hex');
 
     const uploaded1 = await uploadFile({ baseUrl, assetId: asset1, filePath: video30, contentType: 'video/mp4' });
     const uploaded2 = await uploadFile({ baseUrl, assetId: asset2, filePath: video25, contentType: 'video/mp4' });
     const uploaded3 = await uploadFile({ baseUrl, assetId: asset3, filePath: audio, contentType: 'audio/mp4' });
+    const uploaded4 = await uploadFile({ baseUrl, assetId: asset4, filePath: video30WithAudio, contentType: 'video/mp4' });
 
     const renderRes = await fetch(`${baseUrl}/api/render`, {
       method: 'POST',
@@ -317,8 +364,52 @@ const main = async () => {
       throw new Error(`ffmpeg decode errors (single):\n${singleDecode.stderr}`);
     }
 
+    const renderResVideoAudio = await fetch(`${baseUrl}/api/render`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: `pipeline-video-audio-${Date.now()}`,
+        exportQuality: '720p',
+        video1: { path: uploaded4, duration: 3 },
+        video2: null,
+        bgm: null,
+      }),
+    });
+
+    if (!renderResVideoAudio.ok) {
+      throw new Error(`create video-audio job failed: ${renderResVideoAudio.status} ${await renderResVideoAudio.text()}`);
+    }
+
+    const { jobId: videoAudioJobId } = await renderResVideoAudio.json();
+    if (!videoAudioJobId) {
+      throw new Error('no jobId returned for video-audio test');
+    }
+
+    await pollJob({ baseUrl, jobId: videoAudioJobId });
+
+    const videoAudioOutPath = path.join(TEST_DIR, `output-video-audio-${videoAudioJobId}.mp4`);
+    const videoAudioDl = await fetch(`${baseUrl}/api/download/${videoAudioJobId}`);
+    if (!videoAudioDl.ok) {
+      throw new Error(`video-audio download failed: ${videoAudioDl.status}`);
+    }
+    const videoAudioBuf = Buffer.from(await videoAudioDl.arrayBuffer());
+    await fs.writeFile(videoAudioOutPath, videoAudioBuf);
+
+    const videoAudioVolume = await probeVolume(videoAudioOutPath);
+    if (
+      !Number.isFinite(videoAudioVolume.meanDb) ||
+      !Number.isFinite(videoAudioVolume.maxDb) ||
+      videoAudioVolume.meanDb < -60 ||
+      videoAudioVolume.maxDb < -40
+    ) {
+      throw new Error(
+        `expected video audio to be present, got mean=${videoAudioVolume.meanDb}dB max=${videoAudioVolume.maxDb}dB`
+      );
+    }
+
     console.log(`OK: ${outPath}`);
     console.log(`OK: ${singleOutPath}`);
+    console.log(`OK: ${videoAudioOutPath}`);
   } finally {
     server.kill('SIGTERM');
   }

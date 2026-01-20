@@ -10,6 +10,7 @@ import { spawn } from 'child_process';
 import net from 'net';
 import { bundle } from '@remotion/bundler';
 import { renderMedia, selectComposition, makeCancelSignal } from '@remotion/renderer';
+import os from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,21 +32,78 @@ const JOBS_FILE = path.join(RENDER_DIR, 'jobs.json');
 const COMPOSITION_ID = 'heygen-cms';
 const ENTRY_POINT = path.join(ROOT_DIR, 'remotion', 'index.tsx');
 
-const RENDER_CONCURRENCY = (() => {
-  const raw = Number(process.env.RENDER_CONCURRENCY);
-  if (Number.isFinite(raw) && raw > 0) {
-    return Math.floor(raw);
+const CPU_COUNT = Math.max(1, Number(os.cpus()?.length) || 1);
+const DEFAULT_RENDER_CONCURRENCY =
+  process.platform === 'darwin'
+    ? Math.max(1, Math.min(8, Math.round(CPU_COUNT * 0.7)))
+    : 5;
+const DEFAULT_OFFTHREAD_VIDEO_THREADS =
+  process.platform === 'darwin'
+    ? Math.max(2, Math.min(4, Math.round(CPU_COUNT * 0.5)))
+    : 2;
+
+const parseRemotionConcurrency = (value, fallback) => {
+  if (value === null || typeof value === 'undefined') {
+    return fallback;
   }
-  return 5;
-})();
+  const text = String(value).trim();
+  if (!text) {
+    return fallback;
+  }
+  if (/^\d+%$/.test(text)) {
+    return text;
+  }
+  const num = Number(text);
+  if (Number.isFinite(num) && num > 0) {
+    return Math.floor(num);
+  }
+  return fallback;
+};
+
+const RENDER_CONCURRENCY = parseRemotionConcurrency(process.env.RENDER_CONCURRENCY, DEFAULT_RENDER_CONCURRENCY);
 
 const OFFTHREAD_VIDEO_THREADS = (() => {
   const raw = Number(process.env.OFFTHREAD_VIDEO_THREADS);
   if (Number.isFinite(raw) && raw > 0) {
     return Math.floor(raw);
   }
-  return 2;
+  return DEFAULT_OFFTHREAD_VIDEO_THREADS;
 })();
+
+const parseHardwareAcceleration = (value) => {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!text) {
+    return null;
+  }
+  if (text === 'disable' || text === 'disabled' || text === 'off' || text === '0' || text === 'false') {
+    return 'disable';
+  }
+  if (text === 'if-possible' || text === 'if_possible' || text === 'auto') {
+    return 'if-possible';
+  }
+  if (text === 'required' || text === 'require') {
+    return 'required';
+  }
+  return null;
+};
+
+const HARDWARE_ACCELERATION =
+  parseHardwareAcceleration(process.env.RENDER_HARDWARE_ACCELERATION) ??
+  parseHardwareAcceleration(process.env.HARDWARE_ACCELERATION) ??
+  (process.platform === 'darwin' ? 'if-possible' : 'disable');
+
+const resolveVideoBitrate = (exportQuality) => {
+  const override = String(process.env.RENDER_VIDEO_BITRATE ?? '').trim();
+  if (override) {
+    return override;
+  }
+  const byQuality = {
+    '720p': String(process.env.RENDER_VIDEO_BITRATE_720P ?? '').trim() || '6M',
+    '1080p': String(process.env.RENDER_VIDEO_BITRATE_1080P ?? '').trim() || '10M',
+    '4k': String(process.env.RENDER_VIDEO_BITRATE_4K ?? '').trim() || '25M',
+  };
+  return byQuality[exportQuality] || '6M';
+};
 
 const REMOTION_SERVE_PORT = (() => {
   const raw = Number(process.env.REMOTION_SERVE_PORT);
@@ -143,7 +201,8 @@ const runFfmpegWithProgress = (args, controller, options = {}) =>
 
     const proc = spawn('ffmpeg', ffmpegArgs, { stdio: onProgress ? ['ignore', 'ignore', 'pipe'] : 'ignore' });
     if (controller) {
-      controller.activeProcess = proc;
+      controller.activeProcesses ??= new Set();
+      controller.activeProcesses.add(proc);
     }
 
     let buffered = '';
@@ -209,8 +268,8 @@ const runFfmpegWithProgress = (args, controller, options = {}) =>
 
     proc.on('error', reject);
     proc.on('close', (code) => {
-      if (controller && controller.activeProcess === proc) {
-        controller.activeProcess = null;
+      if (controller?.activeProcesses) {
+        controller.activeProcesses.delete(proc);
       }
       if (code === 0) {
         if (onProgress) {
@@ -253,6 +312,14 @@ const parseRatio = (value) => {
     return null;
   }
   return num / den;
+};
+
+const parseBoolean = (value) => {
+  const text = String(value ?? '').trim().toLowerCase();
+  if (!text) {
+    return false;
+  }
+  return !(text === '0' || text === 'false' || text === 'off' || text === 'no');
 };
 
 const probeMedia = async (filePath) => {
@@ -320,6 +387,8 @@ const getQuickCacheKey = (filePath) => {
   return `${size}-${Math.round(mtimeMs)}`;
 };
 
+const STRIP_VIDEO_AUDIO = parseBoolean(process.env.RENDER_STRIP_VIDEO_AUDIO);
+
 const normalizeVideoTo24Fps = async (inputPath, controller, options = {}) => {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
   const assetId = getAssetIdFromPath(inputPath);
@@ -343,7 +412,8 @@ const normalizeVideoTo24Fps = async (inputPath, controller, options = {}) => {
   const inputHash = getQuickCacheKey(inputPath);
   await ensureDir(CACHE_VIDEO_DIR);
 
-  const outputPath = path.join(CACHE_VIDEO_DIR, `${assetId}-${inputHash}-cfr24.mp4`);
+  const normalizeSuffix = STRIP_VIDEO_AUDIO ? 'cfr24' : 'cfr24a';
+  const outputPath = path.join(CACHE_VIDEO_DIR, `${assetId}-${inputHash}-${normalizeSuffix}.mp4`);
   if (await fileExists(outputPath)) {
     if (onProgress) {
       onProgress(1);
@@ -369,7 +439,24 @@ const normalizeVideoTo24Fps = async (inputPath, controller, options = {}) => {
     '18',
     '-movflags',
     '+faststart',
-    '-an',
+    '-map',
+    '0:v:0',
+    ...(STRIP_VIDEO_AUDIO || !meta.audio
+      ? [
+          '-an',
+        ]
+      : [
+          '-map',
+          '0:a?',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '160k',
+          '-ar',
+          '48000',
+        ]),
+    '-sn',
+    '-dn',
   ];
 
   args.push(outputPath);
@@ -604,7 +691,7 @@ const processQueue = async () => {
 
   isRendering = true;
   const { cancelSignal, cancel } = makeCancelSignal();
-  const controller = { cancelled: false, cancel, cancelSignal, activeProcess: null };
+  const controller = { cancelled: false, cancel, cancelSignal, activeProcesses: new Set() };
   jobControllers.set(job.jobId, controller);
 
   const createProgressUpdater = () => {
@@ -652,42 +739,46 @@ const processQueue = async () => {
       };
     };
 
-    const tasks = [
-      { label: 'video1' },
-      ...(job.video2Path ? [{ label: 'video2' }] : []),
-      ...(job.bgm?.path ? [{ label: 'bgm' }] : []),
-    ];
-
+    const tasks = ['video1', ...(job.video2Path ? ['video2'] : []), ...(job.bgm?.path ? ['bgm'] : [])];
     const taskCount = Math.max(1, tasks.length);
     const taskSpan = PREPROCESS_MAX / taskCount;
+    const taskProgress = new Array(taskCount).fill(0);
+
+    const setPreprocessProgress = () => {
+      const sum = taskProgress.reduce((acc, value) => acc + Math.max(0, Math.min(1, Number(value) || 0)), 0);
+      setProgress(sum * taskSpan);
+    };
 
     const runTask = async (index, runner) => {
-      const base = index * taskSpan;
-      setProgress(base);
+      taskProgress[index] = 0;
+      setPreprocessProgress();
       await runner((p) => {
-        const clamped = Math.max(0, Math.min(1, Number(p) || 0));
-        setProgress(base + clamped * taskSpan);
+        taskProgress[index] = Math.max(0, Math.min(1, Number(p) || 0));
+        setPreprocessProgress();
       });
-      setProgress(base + taskSpan);
+      taskProgress[index] = 1;
+      setPreprocessProgress();
     };
 
     let normalizedVideo1 = null;
-    await runTask(0, async (onTaskProgress) => {
-      normalizedVideo1 = await normalizeVideoInput(job.video1Path, onTaskProgress);
-    });
+    let normalizedVideo2 = { url: '', duration: 0 };
+    if (job.video2Path) {
+      await Promise.all([
+        runTask(0, async (onTaskProgress) => {
+          normalizedVideo1 = await normalizeVideoInput(job.video1Path, onTaskProgress);
+        }),
+        runTask(1, async (onTaskProgress) => {
+          normalizedVideo2 = await normalizeVideoInput(job.video2Path, onTaskProgress);
+        }),
+      ]);
+    } else {
+      await runTask(0, async (onTaskProgress) => {
+        normalizedVideo1 = await normalizeVideoInput(job.video1Path, onTaskProgress);
+      });
+    }
     if (controller.cancelled) {
       updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
       return;
-    }
-    let normalizedVideo2 = { url: '', duration: 0 };
-    if (job.video2Path) {
-      await runTask(1, async (onTaskProgress) => {
-        normalizedVideo2 = await normalizeVideoInput(job.video2Path, onTaskProgress);
-      });
-      if (controller.cancelled) {
-        updateJob(job.jobId, { status: 'cancelled', error: 'Render cancelled by user.' });
-        return;
-      }
     }
 
     const inputProps = {
@@ -731,12 +822,17 @@ const processQueue = async () => {
       offthreadVideoThreads: OFFTHREAD_VIDEO_THREADS,
     });
 
+    const useHardwareEncoding =
+      process.platform === 'darwin' && HARDWARE_ACCELERATION !== 'disable';
+
     await renderMedia({
       serveUrl,
       composition,
       codec: 'h264',
-      crf: 24,
-      x264Preset: 'veryfast',
+      hardwareAcceleration: HARDWARE_ACCELERATION,
+      ...(useHardwareEncoding
+        ? { videoBitrate: resolveVideoBitrate(job.exportQuality || '720p') }
+        : { crf: 24, x264Preset: 'veryfast' }),
       audioBitrate: '128k',
       outputLocation: job.outputPath,
       overwrite: true,
@@ -800,9 +896,9 @@ const cancelJob = (jobId) => {
   if (controller) {
     controller.cancelled = true;
     controller.cancel();
-    if (controller.activeProcess) {
-      controller.activeProcess.kill('SIGKILL');
-      controller.activeProcess = null;
+    if (controller.activeProcesses) {
+      controller.activeProcesses.forEach((proc) => proc.kill('SIGKILL'));
+      controller.activeProcesses.clear();
     }
     updateJob(jobId, { status: 'cancelling', error: null });
   }
@@ -855,6 +951,10 @@ const bootstrap = async () => {
   await loadJobsFromDisk();
   serveUrl = await buildBundle();
 
+  console.log(
+    `[render-server] Settings: concurrency=${RENDER_CONCURRENCY}, offthreadVideoThreads=${OFFTHREAD_VIDEO_THREADS}, hardwareAcceleration=${HARDWARE_ACCELERATION}`
+  );
+
   const app = express();
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
@@ -886,9 +986,9 @@ const bootstrap = async () => {
         jobControllers.forEach((controller) => {
           controller.cancelled = true;
           controller.cancel();
-          if (controller.activeProcess) {
-            controller.activeProcess.kill('SIGKILL');
-            controller.activeProcess = null;
+          if (controller.activeProcesses) {
+            controller.activeProcesses.forEach((proc) => proc.kill('SIGKILL'));
+            controller.activeProcesses.clear();
           }
         });
       }

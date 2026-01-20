@@ -126,7 +126,10 @@ Runs a full end-to-end local pipeline test: generates synthetic media, uploads v
 - Output is rendered at `24fps` (inputs are normalized to 24fps CFR automatically for stability).
 - Queue progress is end-to-end (`0–100%`) and includes preprocessing + rendering + encoding.
 - If the UI dev server uses port `3000`, Remotion will now pick a separate free port automatically (override with `REMOTION_SERVE_PORT`).
-- Rendering uses parallel frame rendering. Override with `RENDER_CONCURRENCY` (default `5`) if your machine gets sluggish.
+- Rendering uses parallel frame rendering. Override with `RENDER_CONCURRENCY` (supports `50%`) if your machine gets sluggish.
+- macOS: Rendering prefers hardware-accelerated H.264 encoding by default. Override with `RENDER_HARDWARE_ACCELERATION=disable` to force software encoding.
+- Hardware encoding quality is controlled by bitrate. Override with `RENDER_VIDEO_BITRATE` (or `RENDER_VIDEO_BITRATE_720P` / `RENDER_VIDEO_BITRATE_1080P` / `RENDER_VIDEO_BITRATE_4K`).
+- By default, the input video's original audio track is preserved during CFR normalization. Set `RENDER_STRIP_VIDEO_AUDIO=1` to drop video audio (BGM still renders).
 - Ensure you have `ffmpeg` + `ffprobe` installed.
 - Render job progress persists across browser refreshes while the render server is running.
 - You can cancel an in-progress render from the Queue UI (jobs will show as `CANCELLED`).
